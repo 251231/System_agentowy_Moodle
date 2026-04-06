@@ -4,3 +4,9 @@ lxml
 python-multipart
 openai
 deepl
+SQLAlchemy
+psycopg2-binary
+langchain
+langchain-openai
+python-dotenv
+alembic
