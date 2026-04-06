@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+lxml
+python-multipart
+openai
+deepl
