@@ -2,394 +2,277 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Upload, Settings as SettingsIcon, FileCheck, Loader2,
-    Download, AlertCircle, BookOpen, Layers, Languages,
-    ChevronLeft, ChevronRight, Sparkles, Info
+  Upload, Languages, BrainCircuit, FileCheck, Loader2,
+  Download, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
 import './App.css';
 
-const FLASH_PER_PAGE = 8;
+const API = 'http://localhost:8000';
 
-/* ── Reusable dropzone ─────────────────────────────────────────────────────── */
-const Dropzone = ({ id, file, onChange }) => (
-    <div className={`dropzone ${file ? 'has-file' : ''}`}>
-        <input type="file" id={id} accept=".mbz" onChange={onChange} />
-        <label htmlFor={id}>
-            <div className="icon-wrapper"><FileCheck size={38} /></div>
-            <span>{file ? file.name : 'Przeciągnij plik .mbz lub kliknij'}</span>
-        </label>
-    </div>
-);
-
-/* ── API config panel ──────────────────────────────────────────────────────── */
-const ApiConfig = ({ apiType, apiKey, onChange }) => (
-    <div className="api-config-row">
-        <div className="input-group" style={{ flex: 1 }}>
-            <label>Silnik tłumaczenia / AI</label>
-            <select value={apiType} onChange={e => onChange('apiType', e.target.value)}>
-                <option value="none">Brak API (tryb testowy)</option>
-                <option value="openai">OpenAI (GPT-4o)</option>
-                <option value="deepl">DeepL</option>
-            </select>
-        </div>
-        {apiType !== 'none' && (
-            <div className="input-group" style={{ flex: 1 }}>
-                <label>Klucz API</label>
-                <input type="password" value={apiKey} placeholder="sk-…"
-                    onChange={e => onChange('apiKey', e.target.value)} />
-            </div>
-        )}
-    </div>
-);
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   Main App
-══════════════════════════════════════════════════════════════════════════════ */
 const App = () => {
-    const [activeTab, setActiveTab] = useState('translate');
+  const [file, setFile] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [expanded, setExpanded] = useState({});
+  const [config, setConfig] = useState({
+    translate: true,
+    generate_h5p: false,
+    source_lang: 'en',
+    target_langs: 'en,pl',
+    api_type: 'none',
+    api_key: '',
+  });
 
-    /* ── Translation state ────────────────────────────────────────────────── */
-    const [file, setFile] = useState(null);
-    const [status, setStatus] = useState('idle');
-    const [taskId, setTaskId] = useState(null);
-    const [config, setConfig] = useState({ sourceLang: 'en', targetLangs: 'en,pl', apiType: 'none', apiKey: '' });
+  // ── polling listy zadań ──────────────────────────────────────────────────
+  useEffect(() => {
+    fetchTasks();
+    const id = setInterval(fetchTasks, 3000);
+    return () => clearInterval(id);
+  }, []);
 
-    const resetTranslate = () => {
-        setFile(null); setStatus('idle'); setTaskId(null);
-        const fi = document.getElementById('fileInput');
-        if (fi) fi.value = '';
-    };
+  const fetchTasks = async () => {
+    try {
+      const res = await axios.get(`${API}/tasks`);
+      setTasks(res.data);
+    } catch (_) { }
+  };
 
-    const handleFileChange = e => {
-        if (e.target.files[0]) { setFile(e.target.files[0]); setStatus('idle'); setTaskId(null); }
-    };
+  // ── obsługa pliku ────────────────────────────────────────────────────────
+  const handleDrop = (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files?.[0]) setFile(e.dataTransfer.files[0]);
+  };
 
-    const startTranslation = async () => {
-        if (!file) return;
-        setStatus('uploading');
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('source_lang', config.sourceLang);
-        fd.append('target_langs', config.targetLangs);
-        fd.append('api_type', config.apiType);
-        if (config.apiKey) fd.append('api_key', config.apiKey);
-        try {
-            const res = await axios.post('/api/translate', fd);
-            setTaskId(res.data.task_id);
-            setStatus('processing');
-        } catch { setStatus('error'); }
-    };
+  // ── submit ───────────────────────────────────────────────────────────────
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!file) return;
+    setIsSubmitting(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('translate', config.translate);
+    fd.append('generate_h5p', config.generate_h5p);
+    fd.append('source_lang', config.source_lang);
+    fd.append('target_langs', config.target_langs);
+    fd.append('api_type', config.api_type);
+    if (config.api_key) fd.append('api_key', config.api_key);
+    try {
+      await axios.post(`${API}/tasks`, fd);
+      setFile(null);
+      fetchTasks();
+    } catch (_) {
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-    useEffect(() => {
-        let iv;
-        if (status === 'processing' && taskId) {
-            iv = setInterval(async () => {
-                try {
-                    const res = await axios.get(`/api/status/${taskId}`);
-                    if (res.data.status === 'completed') { setStatus('completed'); clearInterval(iv); }
-                    else if (res.data.status === 'failed') { setStatus('error'); clearInterval(iv); }
-                } catch {}
-            }, 2000);
-        }
-        return () => clearInterval(iv);
-    }, [status, taskId]);
+  // ── pomocnicze ───────────────────────────────────────────────────────────
+  const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
 
-    /* ── Flashcards state ─────────────────────────────────────────────────── */
-    const [flashFile, setFlashFile] = useState(null);
-    const [flashStatus, setFlashStatus] = useState('idle');
-    const [flashcards, setFlashcards] = useState([]);
-    const [flashPage, setFlashPage] = useState(0);
-    const [flashConfig, setFlashConfig] = useState({ apiType: 'none', apiKey: '' });
+  const statusIcon = (s) => ({
+    completed: <CheckCircle2 size={14} className="icon-green" />,
+    processing: <Loader2 size={14} className="icon-blue spin" />,
+    failed: <AlertCircle size={14} className="icon-red" />,
+  }[s] ?? <Clock size={14} className="icon-muted" />);
 
-    const resetFlash = () => {
-        setFlashFile(null); setFlashStatus('idle'); setFlashcards([]); setFlashPage(0);
-        const fi = document.getElementById('flashFileInput');
-        if (fi) fi.value = '';
-    };
+  const statusLabel = (s) => ({
+    completed: 'Ukończone',
+    processing: 'Przetwarzanie',
+    failed: 'Błąd',
+    pending: 'Oczekuje',
+  }[s] ?? s);
 
-    const handleFlashFileChange = e => {
-        if (e.target.files[0]) { setFlashFile(e.target.files[0]); setFlashStatus('idle'); setFlashcards([]); setFlashPage(0); }
-    };
+  return (
+    <div className="app-container">
+      <div className="background-shapes">
+        <div className="shape shape-1" />
+        <div className="shape shape-2" />
+      </div>
 
-    const generateFlashcards = async () => {
-        if (!flashFile) return;
-        setFlashStatus('loading');
-        const fd = new FormData();
-        fd.append('file', flashFile);
-        fd.append('api_type', flashConfig.apiType);
-        if (flashConfig.apiKey) fd.append('api_key', flashConfig.apiKey);
-        try {
-            const res = await axios.post('/api/flashcards', fd);
-            if (res.data.error) { setFlashStatus('error'); return; }
-            setFlashcards(res.data.flashcards || []);
-            setFlashPage(0);
-            setFlashStatus('done');
-        } catch { setFlashStatus('error'); }
-    };
+      <main className="content">
+        {/* ── Header ── */}
+        <motion.header
+          initial={{ y: -40, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.7 }}
+        >
+          <h1>Moodle AI Agent System</h1>
+          <p>Tłumaczenie i kogeneracja treści H5P przy użyciu LLM</p>
+        </motion.header>
 
-    const downloadCsv = async () => {
-        if (!flashFile) return;
-        const fd = new FormData();
-        fd.append('file', flashFile);
-        fd.append('api_type', flashConfig.apiType);
-        if (flashConfig.apiKey) fd.append('api_key', flashConfig.apiKey);
-        try {
-            const res = await axios.post('/api/flashcards-csv', fd, { responseType: 'blob' });
-            const url = URL.createObjectURL(res.data);
-            const a = document.createElement('a'); a.href = url; a.download = 'flashcards.csv'; a.click();
-            URL.revokeObjectURL(url);
-        } catch {}
-    };
+        {/* ── Main grid ── */}
+        <div className="glass-grid">
 
-    const totalPages = Math.ceil(flashcards.length / FLASH_PER_PAGE);
-    const pagedCards = flashcards.slice(flashPage * FLASH_PER_PAGE, (flashPage + 1) * FLASH_PER_PAGE);
-
-    const badgeClass = src => {
-        if (src === 'pojęcie' || src === 'definicja') return 'badge-glossary';
-        if (src === 'zasada' || src === 'proces') return 'badge-quiz';
-        if (src === 'extract') return 'badge-activity';
-        return 'badge-activity';
-    };
-
-    /* ── Render ───────────────────────────────────────────────────────────── */
-    return (
-        <div className="app-container">
-            <div className="background-shapes">
-                <div className="shape shape-1" /><div className="shape shape-2" />
+          {/* ── Config Panel ── */}
+          <motion.section
+            className="config-panel"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+          >
+            <div className="panel-header">
+              <BrainCircuit size={18} />
+              <h2>Konfiguracja</h2>
             </div>
-            <main className="content">
-                <motion.header initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.7 }}>
-                    <h1>Moodle MBZ Toolkit</h1>
-                    <p>Tłumaczenie kursów i generowanie fiszek AI w jednym miejscu.</p>
-                </motion.header>
 
-                {/* Tab bar */}
-                <div className="tab-bar">
-                    <button id="tab-translate" className={`tab-btn${activeTab === 'translate' ? ' active' : ''}`}
-                        onClick={() => setActiveTab('translate')}>
-                        <Languages size={16} /> Tłumaczenie
-                    </button>
-                    <button id="tab-flashcards" className={`tab-btn${activeTab === 'flashcards' ? ' active' : ''}`}
-                        onClick={() => setActiveTab('flashcards')}>
-                        <BookOpen size={16} /> Fiszki AI
-                    </button>
+            <form onSubmit={handleSubmit}>
+              {/* Dropzone */}
+              <div
+                className={`dropzone${file ? ' has-file' : ''}`}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+              >
+                <input type="file" id="fileInput" accept=".mbz"
+                  onChange={(e) => setFile(e.target.files[0])} />
+                <label htmlFor="fileInput">
+                  <div className="icon-wrapper">
+                    <FileCheck size={36} />
+                  </div>
+                  <span>
+                    {file ? file.name : 'Przeciągnij plik .mbz lub kliknij'}
+                  </span>
+                </label>
+              </div>
+
+              {/* Agenci */}
+              <div className="toggle-group">
+                <label className="toggle-row">
+                  <input type="checkbox" checked={config.translate}
+                    onChange={(e) => setConfig({ ...config, translate: e.target.checked })} />
+                  <Languages size={16} className="icon-blue" />
+                  <span>Agent Tłumaczący</span>
+                </label>
+
+                {config.translate && (
+                  <div className="input-group indent">
+                    <label>Języki docelowe</label>
+                    <input type="text" value={config.target_langs}
+                      onChange={(e) => setConfig({ ...config, target_langs: e.target.value })}
+                      placeholder="np. en,pl,de" />
+                  </div>
+                )}
+
+                <label className="toggle-row">
+                  <input type="checkbox" checked={config.generate_h5p}
+                    onChange={(e) => setConfig({ ...config, generate_h5p: e.target.checked })} />
+                  <BrainCircuit size={16} className="icon-purple" />
+                  <span>Agent H5P (Fiszki AI)</span>
+                </label>
+              </div>
+
+              {/* Silnik AI */}
+              <div className="input-group">
+                <label>Silnik tłumaczenia</label>
+                <select value={config.api_type}
+                  onChange={(e) => setConfig({ ...config, api_type: e.target.value })}>
+                  <option value="none">Mock (bez AI)</option>
+                  <option value="openai">OpenAI (GPT-4o)</option>
+                  <option value="deepl">DeepL</option>
+                </select>
+              </div>
+
+              {config.api_type !== 'none' && (
+                <div className="input-group">
+                  <label>Klucz API</label>
+                  <input type="password" value={config.api_key}
+                    onChange={(e) => setConfig({ ...config, api_key: e.target.value })}
+                    placeholder="sk-..." />
                 </div>
+              )}
 
-                <AnimatePresence mode="wait">
-                    {/* ══ TRANSLATION TAB ══ */}
-                    {activeTab === 'translate' && (
-                        <motion.div key="translate" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.25 }} className="glass-grid">
+              <button type="submit"
+                className="btn-primary"
+                disabled={!file || isSubmitting || (!config.translate && !config.generate_h5p)}
+              >
+                {isSubmitting
+                  ? <><Loader2 size={18} className="spin" /> Wysyłanie...</>
+                  : <><Upload size={18} /> Uruchom Agenty</>}
+              </button>
+            </form>
+          </motion.section>
 
-                            <section className="config-panel">
-                                <div className="panel-header"><SettingsIcon size={19} /><h2>Konfiguracja</h2></div>
+          {/* ── Task Feed ── */}
+          <motion.section
+            className="upload-panel task-feed"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.15 }}
+          >
+            <div className="panel-header">
+              <Clock size={18} />
+              <h2>Monitor Zadań</h2>
+              <span className="live-badge">LIVE</span>
+            </div>
 
-                                <div className="input-group">
-                                    <label>Język źródłowy</label>
-                                    <input type="text" value={config.sourceLang} placeholder="np. en"
-                                        onChange={e => setConfig({ ...config, sourceLang: e.target.value })} />
-                                </div>
-                                <div className="input-group">
-                                    <label>Języki docelowe (po przecinku)</label>
-                                    <input type="text" value={config.targetLangs} placeholder="np. en,pl,de"
-                                        onChange={e => setConfig({ ...config, targetLangs: e.target.value })} />
-                                </div>
-                                <div className="input-group">
-                                    <label>Silnik tłumaczenia</label>
-                                    <select value={config.apiType}
-                                        onChange={e => setConfig({ ...config, apiType: e.target.value })}>
-                                        <option value="none">Brak API (prefiks [PL])</option>
-                                        <option value="openai">OpenAI (GPT-4o)</option>
-                                        <option value="deepl">DeepL</option>
-                                    </select>
-                                </div>
-                                {config.apiType !== 'none' && (
-                                    <div className="input-group">
-                                        <label>Klucz API</label>
-                                        <input type="password" value={config.apiKey} placeholder="sk-…"
-                                            onChange={e => setConfig({ ...config, apiKey: e.target.value })} />
-                                    </div>
-                                )}
-                            </section>
+            <div className="task-list">
+              <AnimatePresence>
+                {tasks.length === 0 && (
+                  <motion.div className="empty-state"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <FileCheck size={48} className="icon-muted" />
+                    <p>Brak zadań. Prześlij pierwszą paczkę MBZ.</p>
+                  </motion.div>
+                )}
 
-                            <section className="upload-panel">
-                                <div className="panel-header"><Upload size={19} /><h2>Plik MBZ</h2></div>
-                                <Dropzone id="fileInput" file={file} onChange={handleFileChange} />
-                                <div className="action-area">
-                                    <AnimatePresence mode="wait">
-                                        {status === 'idle' && (
-                                            <motion.button key="start" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                onClick={startTranslation} disabled={!file} className="btn-primary">
-                                                Rozpocznij tłumaczenie
-                                            </motion.button>
-                                        )}
-                                        {(status === 'uploading' || status === 'processing') && (
-                                            <motion.div key="loading" className="status-loader">
-                                                <Loader2 className="spin" size={26} />
-                                                <span>{status === 'uploading' ? 'Wysyłanie…' : 'Przetwarzanie XML…'}</span>
-                                            </motion.div>
-                                        )}
-                                        {status === 'completed' && (
-                                            <motion.div key="done" initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                                                className="completed-actions">
-                                                <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                    onClick={() => window.open(`/api/download/${taskId}`, '_blank')}
-                                                    className="btn-success">
-                                                    <Download size={19} /> Pobierz MBZ
-                                                </motion.button>
-                                                <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                    onClick={resetTranslate} className="btn-secondary">
-                                                    <Upload size={17} /> Przetwórz kolejny kurs
-                                                </motion.button>
-                                            </motion.div>
-                                        )}
-                                        {status === 'error' && (
-                                            <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="error-actions">
-                                                <div className="status-error"><AlertCircle size={19} /><span>Przetwarzanie nie powiodło się</span></div>
-                                                <motion.button whileHover={{ scale: 1.04 }} onClick={resetTranslate} className="btn-secondary">
-                                                    <Upload size={17} /> Spróbuj ponownie
-                                                </motion.button>
-                                            </motion.div>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
-                            </section>
+                {tasks.map((task) => (
+                  <motion.div
+                    key={task.id}
+                    className={`task-card status-${task.status}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    layout
+                  >
+                    <div className="task-header" onClick={() => toggleExpand(task.id)}>
+                      <div className="task-info">
+                        <span className="task-filename">{task.original_filename}</span>
+                        <span className="task-id">#{task.id.split('-')[0]}</span>
+                      </div>
+                      <div className="task-right">
+                        <span className={`status-badge badge-${task.status}`}>
+                          {statusIcon(task.status)}
+                          {statusLabel(task.status)}
+                        </span>
+                        {expanded[task.id]
+                          ? <ChevronUp size={16} className="icon-muted" />
+                          : <ChevronDown size={16} className="icon-muted" />}
+                      </div>
+                    </div>
+
+                    {/* Subtasks */}
+                    <AnimatePresence>
+                      {expanded[task.id] && task.subtasks?.length > 0 && (
+                        <motion.div className="subtask-list"
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                        >
+                          {task.subtasks.map((st, i) => (
+                            <div key={i} className="subtask-row">
+                              {statusIcon(st.status)}
+                              <span className="subtask-name">{st.agent}</span>
+                              <span className="subtask-log">{st.log}</span>
+                            </div>
+                          ))}
                         </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Download */}
+                    {task.status === 'completed' && (
+                      <a className="btn-success btn-download"
+                        href={`${API}/download/${task.id}`} target="_blank" rel="noreferrer">
+                        <Download size={16} /> Pobierz plik
+                      </a>
                     )}
-
-                    {/* ══ FLASHCARDS TAB ══ */}
-                    {activeTab === 'flashcards' && (
-                        <motion.div key="flashcards" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.25 }} className="flashcards-layout">
-
-                            <section className="glass-panel flash-upload-panel">
-                                <div className="panel-header"><Layers size={20} /><h2>Generuj Fiszki z MBZ</h2></div>
-
-                                {/* AI info banner */}
-                                <div className="ai-banner">
-                                    <Sparkles size={16} />
-                                    <span>
-                                        Z kluczem <strong>OpenAI</strong> — GPT-4o automatycznie streszcza cały kurs
-                                        i tworzy inteligentne fiszki edukacyjne. Bez klucza — wyciągane są
-                                        tytuły i opisy z pliku XML.
-                                    </span>
-                                </div>
-
-                                <Dropzone id="flashFileInput" file={flashFile} onChange={handleFlashFileChange} />
-
-                                {/* API config */}
-                                <ApiConfig
-                                    apiType={flashConfig.apiType}
-                                    apiKey={flashConfig.apiKey}
-                                    onChange={(k, v) => setFlashConfig(prev => ({ ...prev, [k]: v }))}
-                                />
-
-                                <div className="action-area">
-                                    <AnimatePresence mode="wait">
-                                        {flashStatus === 'idle' && (
-                                            <motion.button key="gen" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                onClick={generateFlashcards} disabled={!flashFile} className="btn-primary">
-                                                <Sparkles size={17} />
-                                                {flashConfig.apiType === 'openai' ? 'Generuj fiszki AI' : 'Generuj fiszki'}
-                                            </motion.button>
-                                        )}
-                                        {flashStatus === 'loading' && (
-                                            <motion.div key="loading" className="status-loader">
-                                                <Loader2 className="spin" size={26} />
-                                                <span>
-                                                    {flashConfig.apiType === 'openai'
-                                                        ? 'Analizowanie kursu przez AI (może chwilę potrwać)…'
-                                                        : 'Analizowanie kursu…'}
-                                                </span>
-                                            </motion.div>
-                                        )}
-                                        {flashStatus === 'error' && (
-                                            <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="error-actions">
-                                                <div className="status-error"><AlertCircle size={19} /><span>Nie udało się wygenerować fiszek</span></div>
-                                                <motion.button whileHover={{ scale: 1.04 }} onClick={resetFlash} className="btn-secondary">
-                                                    <Upload size={17} /> Spróbuj ponownie
-                                                </motion.button>
-                                            </motion.div>
-                                        )}
-                                        {flashStatus === 'done' && flashcards.length === 0 && (
-                                            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flash-empty">
-                                                <Info size={22} />
-                                                <span>Kurs nie zawarł treści nadających się do fiszek.<br />Sprawdź czy plik MBZ zawiera aktywności, quizy lub słowniki.</span>
-                                                <motion.button whileHover={{ scale: 1.04 }} onClick={resetFlash} className="btn-secondary">
-                                                    <Upload size={17} /> Spróbuj inny plik
-                                                </motion.button>
-                                            </motion.div>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
-                            </section>
-
-                            {/* Results */}
-                            {flashStatus === 'done' && flashcards.length > 0 && (
-                                <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: 0.15 }} className="glass-panel flash-results">
-
-                                    <div className="flash-results-header">
-                                        <div>
-                                            <h3>Wygenerowane fiszki</h3>
-                                            <span className="flash-count">
-                                                {flashcards.length} fiszek
-                                                {flashConfig.apiType === 'openai' && <span className="ai-badge"><Sparkles size={10} /> AI</span>}
-                                            </span>
-                                        </div>
-                                        <div className="flash-header-actions">
-                                            <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                onClick={downloadCsv} className="btn-success btn-sm">
-                                                <Download size={14} /> CSV (Anki)
-                                            </motion.button>
-                                            <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                onClick={resetFlash} className="btn-secondary btn-sm">
-                                                <Upload size={14} /> Nowy plik
-                                            </motion.button>
-                                        </div>
-                                    </div>
-
-                                    <div className="flash-cards-grid">
-                                        {pagedCards.map((card, idx) => (
-                                            <motion.div key={idx} className="flash-card"
-                                                initial={{ opacity: 0, y: 12 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                transition={{ delay: idx * 0.04 }}>
-                                                <div className="flash-card-front">
-                                                    <span className={`source-badge ${badgeClass(card.source)}`}>{card.source}</span>
-                                                    <p>{card.front}</p>
-                                                </div>
-                                                <div className="flash-card-divider" />
-                                                <div className="flash-card-back">
-                                                    <p>{card.back}</p>
-                                                </div>
-                                            </motion.div>
-                                        ))}
-                                    </div>
-
-                                    {totalPages > 1 && (
-                                        <div className="flash-pagination">
-                                            <button id="page-prev" className="page-btn"
-                                                onClick={() => setFlashPage(p => Math.max(0, p - 1))}
-                                                disabled={flashPage === 0}>
-                                                <ChevronLeft size={16} />
-                                            </button>
-                                            <span>{flashPage + 1} / {totalPages}</span>
-                                            <button id="page-next" className="page-btn"
-                                                onClick={() => setFlashPage(p => Math.min(totalPages - 1, p + 1))}
-                                                disabled={flashPage === totalPages - 1}>
-                                                <ChevronRight size={16} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </motion.section>
-                            )}
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-            </main>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </motion.section>
         </div>
-    );
+      </main>
+    </div>
+  );
 };
 
 export default App;
