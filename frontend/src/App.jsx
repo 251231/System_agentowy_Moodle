@@ -10,17 +10,17 @@ import './App.css';
 const API = 'http://localhost:8000';
 
 const App = () => {
-  const [file, setFile]           = useState(null);
+  const [file, setFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [tasks, setTasks]         = useState([]);
-  const [expanded, setExpanded]   = useState({});
-  const [config, setConfig]       = useState({
-    translate:    true,
+  const [tasks, setTasks] = useState([]);
+  const [expanded, setExpanded] = useState({});
+  const [config, setConfig] = useState({
+    translate: true,
     generate_h5p: false,
-    source_lang:  'en',
+    source_lang: 'en',
     target_langs: 'en,pl',
-    api_type:     'none',
-    api_key:      '',
+    api_type: 'none',
+    api_key: '',
   });
 
   // ── polling listy zadań ──────────────────────────────────────────────────
@@ -34,7 +34,7 @@ const App = () => {
     try {
       const res = await axios.get(`${API}/tasks`);
       setTasks(res.data);
-    } catch (_) {}
+    } catch (_) { }
   };
 
   // ── obsługa pliku ────────────────────────────────────────────────────────
@@ -50,11 +50,11 @@ const App = () => {
     setIsSubmitting(true);
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('translate',    config.translate);
+    fd.append('translate', config.translate);
     fd.append('generate_h5p', config.generate_h5p);
-    fd.append('source_lang',  config.source_lang);
+    fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs);
-    fd.append('api_type',     config.api_type);
+    fd.append('api_type', config.api_type);
     if (config.api_key) fd.append('api_key', config.api_key);
     try {
       await axios.post(`${API}/tasks`, fd);
@@ -70,16 +70,16 @@ const App = () => {
   const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
 
   const statusIcon = (s) => ({
-    completed:  <CheckCircle2 size={14} className="icon-green" />,
-    processing: <Loader2     size={14} className="icon-blue spin" />,
-    failed:     <AlertCircle size={14} className="icon-red" />,
+    completed: <CheckCircle2 size={14} className="icon-green" />,
+    processing: <Loader2 size={14} className="icon-blue spin" />,
+    failed: <AlertCircle size={14} className="icon-red" />,
   }[s] ?? <Clock size={14} className="icon-muted" />);
 
   const statusLabel = (s) => ({
-    completed:  'Ukończone',
+    completed: 'Ukończone',
     processing: 'Przetwarzanie',
-    failed:     'Błąd',
-    pending:    'Oczekuje',
+    failed: 'Błąd',
+    pending: 'Oczekuje',
   }[s] ?? s);
 
   return (
@@ -93,7 +93,7 @@ const App = () => {
         {/* ── Header ── */}
         <motion.header
           initial={{ y: -40, opacity: 0 }}
-          animate={{ y: 0,   opacity: 1 }}
+          animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.7 }}
         >
           <h1>Moodle AI Agent System</h1>
@@ -107,7 +107,7 @@ const App = () => {
           <motion.section
             className="config-panel"
             initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0  }}
+            animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
             <div className="panel-header">
@@ -219,7 +219,7 @@ const App = () => {
                     key={task.id}
                     className={`task-card status-${task.status}`}
                     initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0  }}
+                    animate={{ opacity: 1, y: 0 }}
                     layout
                   >
                     <div className="task-header" onClick={() => toggleExpand(task.id)}>

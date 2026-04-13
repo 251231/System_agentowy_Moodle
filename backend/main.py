@@ -1,16 +1,20 @@
 import os
+import io
+import csv
 import shutil
 import datetime
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
 from models import Task, SubTask
 from pipeline import PipelineManager
+from moodle_processor import MoodleMBZProcessor
 
 # Inicjalizacja tabel w bazie
 Base.metadata.create_all(bind=engine)
@@ -78,6 +82,8 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
+
+tasks = {}
 @app.get("/")
 def root():
     return {"status": "Moodle Agent System API is running"}
@@ -111,6 +117,7 @@ async def create_task(
 
     input_path  = UPLOAD_DIR / f"{task.id}_{file.filename}"
     output_path = UPLOAD_DIR / f"out_{task.id}_{file.filename}"
+
 
     with open(input_path, "wb") as buf:
         shutil.copyfileobj(file.file, buf)
@@ -156,6 +163,8 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
     }
 
 
+
+
 @app.get("/download/{task_id}")
 def download(task_id: str, db: Session = Depends(get_db)):
     t = db.query(Task).filter_by(id=task_id).first()
@@ -169,6 +178,71 @@ def download(task_id: str, db: Session = Depends(get_db)):
         filename=f"processed_{t.original_filename}",
         media_type="application/octet-stream",
     )
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Flashcards / AI summarization
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/flashcards")
+async def generate_flashcards(
+    file: UploadFile = File(...),
+    api_type: str = Form("none"),
+    api_key: str = Form(None),
+):
+    """Extract / AI-summarize the course and return flashcards as JSON."""
+    task_id = str(uuid.uuid4())
+    input_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
+
+    with open(input_path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+
+    try:
+        processor = MoodleMBZProcessor(api_type=api_type, api_key=api_key)
+        flashcards = processor.extract_flashcards(str(input_path))
+        return {"flashcards": flashcards, "count": len(flashcards)}
+    except Exception as e:
+        return {"error": str(e), "flashcards": []}
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+@app.post("/flashcards-csv")
+async def download_flashcards_csv(
+    file: UploadFile = File(...),
+    api_type: str = Form("none"),
+    api_key: str = Form(None),
+):
+    """Extract flashcards and return as Anki-compatible CSV (semicolon-separated)."""
+    task_id = str(uuid.uuid4())
+    input_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
+
+    with open(input_path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+
+    try:
+        processor = MoodleMBZProcessor(api_type=api_type, api_key=api_key)
+        flashcards = processor.extract_flashcards(str(input_path))
+
+        out = io.StringIO()
+        writer = csv.writer(out, delimiter=';')
+        writer.writerow(['Front', 'Back', 'Tags'])
+        for card in flashcards:
+            writer.writerow([card['front'], card['back'], card.get('source', '')])
+
+        return Response(
+            content=out.getvalue().encode('utf-8-sig'),
+            media_type='text/csv; charset=utf-8',
+            headers={'Content-Disposition': 'attachment; filename="flashcards.csv"'},
+        )
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if input_path.exists():
+            input_path.unlink()
 
 
 if __name__ == "__main__":
