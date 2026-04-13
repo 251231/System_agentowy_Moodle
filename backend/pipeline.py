@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agents.translation_agent import TranslationAgent
 from agents.h5p_agent import H5PAgent
+from moodle_backup_parser import MoodleXMLModifier
 
 
 class PipelineManager:
@@ -51,17 +52,20 @@ class PipelineManager:
                 if on_agent_done:
                     on_agent_done(name, success, log)
 
-            # ── Pakowanie ────────────────────────────────────────────────
-            # WAŻNE: Katalog h5p_generated/ NIE wchodzi do archiwum MBZ!
-            # Moodle przyjmuje wyłącznie oryginalną strukturę backupu.
-            # H5P jest generowane jako osobny output/log, nie wstrzykiwane do MBZ.
-            EXCLUDE = {"h5p_generated"}
+            # ── Wstrzykiwanie do XML (Faza 3) ──────────────────────────────────
+            if any(isinstance(a, H5PAgent) for a in self.agents):
+                modifier = MoodleXMLModifier(tmp_path)
+                modifier.inject_h5p_generated()
 
+            # ── Pakowanie ────────────────────────────────────────────────
+            # Folder h5p_generated został przetworzony i przeniesiony do activities/
+            # przez MoodleXMLModifier, więc nie musimy go już specjalnie wykluczać.
+            
             with tarfile.open(output_path, "w:gz") as tar:
                 for f in tmp_path.rglob("*"):
-                    # Pomijaj katalogi i pliki w wykluczonych folderach
                     relative = f.relative_to(tmp_path)
-                    if any(part in EXCLUDE for part in relative.parts):
+                    # Pomijamy folder h5p_generated jeśli jakieś szczątki zostały
+                    if "h5p_generated" in relative.parts:
                         continue
                     if f.is_file():
                         tar.add(f, arcname=relative)

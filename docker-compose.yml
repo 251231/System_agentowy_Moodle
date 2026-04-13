@@ -28,10 +28,33 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://moodle:moodle_pass@db:5432/moodle_agents
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  redis:
+    image: redis:7-alpine
+    container_name: moodle_redis
+    ports:
+      - "6379:6379"
+
+  celery_worker:
+    build: ./backend
+    container_name: moodle_celery
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://moodle:moodle_pass@db:5432/moodle_agents
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - ./backend:/app
+    command: celery -A worker.celery_app worker --loglevel=info
 
   frontend:
     build: ./frontend

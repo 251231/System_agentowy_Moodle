@@ -10,3 +10,8 @@ langchain
 langchain-openai
 python-dotenv
 alembic
+python-jose[cryptography]
+passlib
+bcrypt==4.0.1
+celery
+redis

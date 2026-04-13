@@ -7,12 +7,14 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
-from models import Task, SubTask
+from models import Task, SubTask, User
+from auth import get_current_user, create_access_token, verify_password, get_password_hash, ACCESS_TOKEN_EXPIRE_MINUTES
 from pipeline import PipelineManager
 from moodle_processor import MoodleMBZProcessor
 
@@ -32,55 +34,7 @@ UPLOAD_DIR = Path("temp")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-def _set_subtask(db: Session, task_id: str, agent_name: str, status: str, log: str = ""):
-    st = db.query(SubTask).filter_by(task_id=task_id, agent_name=agent_name).first()
-    if not st:
-        st = SubTask(task_id=task_id, agent_name=agent_name)
-        db.add(st)
-    st.status = status
-    st.log = log
-    if status == "processing":
-        st.started_at = datetime.datetime.utcnow()
-    if status in ("completed", "failed"):
-        st.finished_at = datetime.datetime.utcnow()
-    db.commit()
-
-
-# ── background job ────────────────────────────────────────────────────────────
-def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
-    from database import SessionLocal
-    db = SessionLocal()
-    try:
-        task = db.query(Task).filter_by(id=task_id).first()
-        task.status = "processing"
-        db.commit()
-
-        pipeline = PipelineManager(config)
-
-        def on_start(name):
-            _set_subtask(db, task_id, name, "processing")
-
-        def on_done(name, success, log):
-            _set_subtask(db, task_id, name, "completed" if success else "failed", log)
-
-        pipeline.execute(input_path, output_path, on_agent_start=on_start, on_agent_done=on_done)
-
-        task.status = "completed"
-        task.result_filename = Path(output_path).name
-        db.commit()
-    except Exception as e:
-        task = db.query(Task).filter_by(id=task_id).first()
-        if task:
-            task.status = "failed"
-            db.commit()
-        print(f"[Pipeline] Error: {e}")
-    finally:
-        if Path(input_path).exists():
-            Path(input_path).unlink()
-        db.close()
-
-
+from worker import run_pipeline_task
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 tasks = {}
@@ -88,10 +42,34 @@ tasks = {}
 def root():
     return {"status": "Moodle Agent System API is running"}
 
+@app.post("/auth/register")
+def register(user_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    user = db.query(User).filter(User.username == user_data.username).first()
+    if user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    hashed_password = get_password_hash(user_data.password)
+    new_user = User(username=user_data.username, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    return {"msg": "User created successfully"}
+
+@app.post("/auth/login")
+def login(user_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    user = db.query(User).filter(User.username == user_data.username).first()
+    if not user or not verify_password(user_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.post("/tasks")
 async def create_task(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     translate:     bool = Form(False),
     generate_h5p:  bool = Form(False),
@@ -100,6 +78,7 @@ async def create_task(
     api_type:      str  = Form("none"),
     api_key:       str  = Form(""),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     config = {
         "translate":     translate,
@@ -110,7 +89,7 @@ async def create_task(
         "api_key":       api_key or os.environ.get("OPENAI_API_KEY", ""),
     }
 
-    task = Task(original_filename=file.filename, config=config)
+    task = Task(original_filename=file.filename, config=config, user_id=current_user.id)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -122,16 +101,14 @@ async def create_task(
     with open(input_path, "wb") as buf:
         shutil.copyfileobj(file.file, buf)
 
-    background_tasks.add_task(
-        _run_pipeline, task.id, str(input_path), str(output_path), config
-    )
+    run_pipeline_task.delay(str(task.id), str(input_path), str(output_path), config)
 
     return {"task_id": task.id, "status": "pending"}
 
 
 @app.get("/tasks")
-def list_tasks(db: Session = Depends(get_db)):
-    tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    tasks = db.query(Task).filter(Task.user_id == current_user.id).order_by(Task.created_at.desc()).all()
     result = []
     for t in tasks:
         result.append({
@@ -148,8 +125,8 @@ def list_tasks(db: Session = Depends(get_db)):
 
 
 @app.get("/tasks/{task_id}")
-def get_task(task_id: str, db: Session = Depends(get_db)):
-    t = db.query(Task).filter_by(id=task_id).first()
+def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    t = db.query(Task).filter_by(id=task_id, user_id=current_user.id).first()
     if not t:
         return {"status": "not_found"}
     return {
@@ -166,8 +143,8 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/download/{task_id}")
-def download(task_id: str, db: Session = Depends(get_db)):
-    t = db.query(Task).filter_by(id=task_id).first()
+def download(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    t = db.query(Task).filter_by(id=task_id, user_id=current_user.id).first()
     if not t or t.status != "completed" or not t.result_filename:
         return {"error": "File not ready or not found"}
     path = UPLOAD_DIR / t.result_filename
@@ -191,6 +168,7 @@ async def generate_flashcards(
     file: UploadFile = File(...),
     api_type: str = Form("none"),
     api_key: str = Form(None),
+    current_user: User = Depends(get_current_user),
 ):
     """Extract / AI-summarize the course and return flashcards as JSON."""
     task_id = str(uuid.uuid4())
@@ -215,6 +193,7 @@ async def download_flashcards_csv(
     file: UploadFile = File(...),
     api_type: str = Form("none"),
     api_key: str = Form(None),
+    current_user: User = Depends(get_current_user),
 ):
     """Extract flashcards and return as Anki-compatible CSV (semicolon-separated)."""
     task_id = str(uuid.uuid4())
