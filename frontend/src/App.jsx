@@ -16,7 +16,6 @@ const App = () => {
   const [expanded, setExpanded] = useState({});
   const [config, setConfig] = useState({
     translate: true,
-    generate_h5p: false,
     source_lang: 'en',
     target_langs: 'en,pl',
     api_type: 'none',
@@ -51,7 +50,6 @@ const App = () => {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('translate', config.translate);
-    fd.append('generate_h5p', config.generate_h5p);
     fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs);
     fd.append('api_type', config.api_type);
@@ -97,7 +95,7 @@ const App = () => {
           transition={{ duration: 0.7 }}
         >
           <h1>Moodle AI Agent System</h1>
-          <p>Tłumaczenie i kogeneracja treści H5P przy użyciu LLM</p>
+          <p>Tłumaczenie treści dydaktycznych przy użyciu LLM</p>
         </motion.header>
 
         {/* ── Main grid ── */}
@@ -151,13 +149,6 @@ const App = () => {
                       placeholder="np. en,pl,de" />
                   </div>
                 )}
-
-                <label className="toggle-row">
-                  <input type="checkbox" checked={config.generate_h5p}
-                    onChange={(e) => setConfig({ ...config, generate_h5p: e.target.checked })} />
-                  <BrainCircuit size={16} className="icon-purple" />
-                  <span>Agent H5P (Fiszki AI)</span>
-                </label>
               </div>
 
               {/* Silnik AI */}
@@ -182,7 +173,7 @@ const App = () => {
 
               <button type="submit"
                 className="btn-primary"
-                disabled={!file || isSubmitting || (!config.translate && !config.generate_h5p)}
+                disabled={!file || isSubmitting || !config.translate}
               >
                 {isSubmitting
                   ? <><Loader2 size={18} className="spin" /> Wysyłanie...</>
