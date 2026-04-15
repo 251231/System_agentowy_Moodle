@@ -22,6 +22,7 @@ Key design decisions:
 import io
 import re
 import copy
+import json
 import html as _html
 import tarfile
 import zipfile
@@ -118,6 +119,24 @@ class MoodleMBZProcessor:
 
     # ──────────────────────────────────────────────────── XML content processing
 
+    # ── Safety Validation ─────────────────────────────────────────────────────
+    def _is_translatable(self, text: str) -> bool:
+        if not text:
+            return False
+        # Do not translate serialized PHP objects/arrays
+        if re.match(r'^[aAwWbBiIdDsSnoON]:\d+:\{', text[:20]) or text.startswith('b:0;') or text.startswith('b:1;'):
+            return False
+        # Do not translate URLs
+        if re.match(r'^https?://[^\s]+$', text):
+            return False
+        # Do not translate pure numbers or single special chars
+        if re.match(r'^[\d\s,.;:/-]+$', text) or len(text) <= 1:
+            return False
+        # Do not translate Base64/hashes (long string without spaces)
+        if len(text) > 40 and ' ' not in text and '<' not in text:
+            return False
+        return True
+
     def _replace_in_tag(self, file_content: str, tag: str):
         """
         Find every <tag>…</tag> in file_content and translate it.
@@ -136,6 +155,24 @@ class MoodleMBZProcessor:
             inner     = m.group(2)
             close_tag = m.group(3)
 
+            # --- Safety checks to prevent DMLWriteException ---
+            if '$@NULL@$' in inner or not inner.strip():
+                return m.group(0)
+            
+            stripped_test = inner.strip()
+
+            # Skip translation of configuration payload strings
+            if not self._is_translatable(stripped_test):
+                return m.group(0)
+
+            if stripped_test.startswith('{') or stripped_test.startswith('['):
+                try:
+                    json.loads(stripped_test)
+                    return m.group(0) # Valid JSON, translating it will crash Moodle plugin restore
+                except Exception:
+                    pass
+            # --------------------------------------------------
+
             # ── STRATEGY A: CDATA (MUST be checked before {mlang} test) ───────
             # If inner has CDATA, process it (even if the CDATA itself contains
             # {mlang} blocks).  Stripping CDATA would make HTML inside mlang
@@ -143,18 +180,18 @@ class MoodleMBZProcessor:
             cdata_m = re.match(r'^\s*<!\[CDATA\[(.*)\]\]>\s*$', inner, re.DOTALL)
             if cdata_m:
                 return self._strat_cdata(
-                    open_tag, cdata_m.group(1), close_tag, change_count)
+                    open_tag, cdata_m.group(1), close_tag, change_count, tag, inner)
 
             # ── STRATEGY B: raw {mlang} blocks ────────────────────────────────
             if '{mlang' in inner:
                 return self._strat_mlang(
-                    open_tag, inner, close_tag, change_count)
+                    open_tag, inner, close_tag, change_count, tag)
 
             # ── STRATEGY C: plain text (no angle brackets inside) ─────────────
             stripped = inner.strip()
             if stripped and '<' not in stripped:
                 return self._strat_plain(
-                    open_tag, stripped, close_tag, change_count)
+                    open_tag, stripped, close_tag, change_count, tag, inner)
 
             return m.group(0)   # raw HTML without wrapper → leave untouched
 
@@ -162,7 +199,7 @@ class MoodleMBZProcessor:
         return new_content, change_count[0]
 
     # ── Strategy A ── CDATA (preserve wrapper) ────────────────────────────────
-    def _strat_cdata(self, open_tag, cdata_inner, close_tag, cc):
+    def _strat_cdata(self, open_tag, cdata_inner, close_tag, cc, tag, original_inner):
         stripped = cdata_inner.strip()
         if not stripped:
             return f'{open_tag}<![CDATA[{cdata_inner}]]>{close_tag}'
@@ -180,6 +217,8 @@ class MoodleMBZProcessor:
                         for lang in self.target_langs
                     }
                     new_inner = self.wrap_mlang(translations)
+                    if tag == 'name' and len(new_inner) > 255:
+                        return f'{open_tag}{original_inner}{close_tag}'
                     if new_inner != stripped:
                         cc[0] += 1
                     return f'{open_tag}<![CDATA[{new_inner}]]>{close_tag}'
@@ -193,11 +232,15 @@ class MoodleMBZProcessor:
                    else self.translate_text(stripped, lang))
             for lang in self.target_langs
         }
+        new_inner = self.wrap_mlang(translations)
+        if tag == 'name' and len(new_inner) > 255:
+            return f'{open_tag}{original_inner}{close_tag}'
+            
         cc[0] += 1
-        return f'{open_tag}<![CDATA[{self.wrap_mlang(translations)}]]>{close_tag}'
+        return f'{open_tag}<![CDATA[{new_inner}]]>{close_tag}'
 
     # ── Strategy B ── raw {mlang} blocks ─────────────────────────────────────
-    def _strat_mlang(self, open_tag, inner, close_tag, cc):
+    def _strat_mlang(self, open_tag, inner, close_tag, cc, tag):
         src_re = rf'\{{mlang {re.escape(self.source_lang)}\}}(.*?)\{{mlang\}}'
         src_m  = re.search(src_re, inner, re.DOTALL)
         if not src_m:
@@ -213,21 +256,32 @@ class MoodleMBZProcessor:
             for lang in self.target_langs
         }
         new_inner = self.wrap_mlang(translations)
+        if tag == 'name' and len(new_inner) > 255:
+            return f'{open_tag}{inner}{close_tag}'
+            
         if new_inner == inner.strip():
             return f'{open_tag}{inner}{close_tag}'
         cc[0] += 1
         return f'{open_tag}{new_inner}{close_tag}'
 
     # ── Strategy C ── plain text ──────────────────────────────────────────────
-    def _strat_plain(self, open_tag, text, close_tag, cc):
+    def _strat_plain(self, open_tag, text, close_tag, cc, tag, original_inner):
         print(f'      [plain] {text[:60]!r}')
-        translations = {
-            lang: (text if lang == self.source_lang
-                   else self.translate_text(text, lang))
-            for lang in self.target_langs
-        }
+        translations = {}
+        for lang in self.target_langs:
+            if lang == self.source_lang:
+                translated = text
+            else:
+                translated = self.translate_text(_html.unescape(text), lang)
+                translated = _html.escape(translated)
+            translations[lang] = translated
+
+        new_inner = self.wrap_mlang(translations)
+        if tag == 'name' and len(new_inner) > 255:
+            return f'{open_tag}{original_inner}{close_tag}'
+            
         cc[0] += 1
-        return f'{open_tag}{self.wrap_mlang(translations)}{close_tag}'
+        return f'{open_tag}{new_inner}{close_tag}'
 
     # ──────────────────────────────────────────────────────── archive processing
 
@@ -282,36 +336,39 @@ class MoodleMBZProcessor:
         processed = 0
         print(f'[*] Streaming tar: {input_mbz}')
 
-        with tarfile.open(input_mbz, 'r:gz') as tar_in, \
-             tarfile.open(output_mbz, 'w:gz') as tar_out:
+        with tarfile.open(input_mbz, 'r:gz') as tar_in:
+            with tarfile.open(output_mbz, 'w:gz', format=tar_in.format) as tar_out:
+                for member in tar_in:
+                    if not member.isfile():
+                        # Directories, symlinks, etc. — copy header verbatim
+                        tar_out.addfile(member)
+                        continue
 
-            for member in tar_in:
-                if not member.isfile():
-                    # Directories, symlinks, etc. — copy header verbatim
-                    tar_out.addfile(member)
-                    continue
+                    fh = tar_in.extractfile(member)
+                    if fh is None:
+                        tar_out.addfile(member)
+                        continue
 
-                fh = tar_in.extractfile(member)
-                if fh is None:
-                    tar_out.addfile(member)
-                    continue
+                    original_bytes = fh.read()
 
-                original_bytes = fh.read()
+                    if self._should_process(member.name):
+                        print(f'  → {member.name}')
+                        new_bytes = self.process_xml_bytes(original_bytes, member.name)
+                    else:
+                        new_bytes = original_bytes
 
-                if self._should_process(member.name):
-                    print(f'  → {member.name}')
-                    new_bytes = self.process_xml_bytes(original_bytes, member.name)
-                else:
-                    new_bytes = original_bytes
-
-                if new_bytes is not original_bytes:
-                    # Content changed: update TarInfo size, keep everything else
-                    new_info = copy.copy(member)
-                    new_info.size = len(new_bytes)
-                    tar_out.addfile(new_info, io.BytesIO(new_bytes))
-                    processed += 1
-                else:
-                    tar_out.addfile(member, io.BytesIO(original_bytes))
+                    if new_bytes is not original_bytes:
+                        # Content changed: update TarInfo size, keep everything else
+                        new_info = copy.copy(member)
+                        new_info.size = len(new_bytes)
+                        
+                        # Fix PHP Moodle tar extractor issues by ensuring GNU/USTAR compatibility.
+                        # tarfile in Python 3.8+ may auto-generate PAX extended headers during write
+                        # if the file is slightly modified, which crashes Moodle's Archive_Tar parser.
+                        tar_out.addfile(new_info, io.BytesIO(new_bytes))
+                        processed += 1
+                    else:
+                        tar_out.addfile(member, io.BytesIO(original_bytes))
 
         print(f'[+] Done! Modified {processed} file(s).')
 
@@ -333,172 +390,7 @@ class MoodleMBZProcessor:
 
         print(f'[+] Done! Modified {processed} file(s).')
 
-    # ──────────────────────────────────────────────────── flashcard extraction
-
-    def _strip_html(self, text: str) -> str:
-        """Remove markup; decode HTML entities; normalize whitespace."""
-        if not text:
-            return ''
-        # Remove {mlang} markers
-        text = re.sub(r'\{mlang[^}]*\}', '', text)
-        # Unwrap CDATA
-        text = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', text, flags=re.DOTALL)
-        # Strip HTML tags
-        text = re.sub(r'<[^>]+>', ' ', text)
-        # Decode HTML entities (&nbsp; → \xa0, &amp; → &, etc.)
-        text = _html.unescape(text)
-        # Normalize ALL whitespace (including non-breaking space U+00A0)
-        text = re.sub(r'[\s\u00a0]+', ' ', text).strip()
-        return text
-
-    def _is_educational(self, text: str) -> bool:
-        if not text or len(text) < 30:
-            return False
-        if re.match(r'^[aAwWbBiIdDsS]:\d+:\{', text):  # PHP serialized
-            return False
-        if '$@' in text:                                 # Moodle placeholders
-            return False
-        if re.match(r'^https?://', text):               # URLs
-            return False
-        if re.match(r'^[\d\s,.;:/-]+$', text):          # Pure numbers
-            return False
-        if not re.search(r'[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{3,}', text):
-            return False
-        if len(text) < 50 and ' ' not in text:          # Code-like strings
-            return False
-        return True
-
-    def _collect_course_text(self, tmp_path: Path) -> list:
-        sections = []
-        for xml_file in sorted(tmp_path.rglob('*.xml')):
-            if xml_file.name in SKIP_FILES:
-                continue
-            if xml_file.name in ('grades.xml', 'attempts.xml', 'submissions.xml'):
-                continue
-            try:
-                parser = ET.XMLParser(strip_cdata=False, recover=True)
-                root   = ET.parse(str(xml_file), parser).getroot()
-
-                title = ''
-                for tag in ('name', 'fullname'):
-                    el = root.find(f'.//{tag}')
-                    if el is not None and el.text:
-                        title = self._strip_html(el.text.strip())
-                        if title:
-                            break
-
-                parts = []
-                for tag in ('intro', 'summary', 'content', 'description'):
-                    for el in root.iter(tag):
-                        txt_el = el.find('text')
-                        raw  = (txt_el.text if txt_el is not None else el.text) or ''
-                        clean = self._strip_html(raw)
-                        if self._is_educational(clean):
-                            parts.append(clean[:1200])
-
-                for el in root.iter('text'):
-                    clean = self._strip_html(el.text or '')
-                    if self._is_educational(clean):
-                        parts.append(clean[:800])
-
-                seen, unique = set(), []
-                for p in parts:
-                    k = p[:80]
-                    if k not in seen:
-                        seen.add(k); unique.append(p)
-
-                if title or unique:
-                    sections.append({'title': title or xml_file.stem,
-                                     'content': ' '.join(unique[:4])})
-            except Exception:
-                pass
-        return sections
-
-    def _ai_generate_flashcards(self, sections: list) -> list:
-        if not (self.api_type == 'openai' and self.api_key):
-            return []
-        blocks = []
-        for s in sections[:60]:
-            block = f"### {s['title']}"
-            if s['content']:
-                block += f"\n{s['content'][:900]}"
-            blocks.append(block)
-        course_text = '\n\n'.join(blocks)
-        if len(course_text) > 15000:
-            course_text = course_text[:15000] + '\n[...skrócono...]'
-        try:
-            import json
-            from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
-            resp = client.chat.completions.create(
-                model='gpt-4o',
-                response_format={'type': 'json_object'},
-                messages=[
-                    {'role': 'system', 'content': (
-                        'Jesteś ekspertem od tworzenia materiałów edukacyjnych.\n'
-                        'Na podstawie treści kursu Moodle utwórz zestaw fiszek.\n\n'
-                        'ZASADY:\n'
-                        '• Tylko treść merytoryczna: pojęcia, definicje, procesy, fakty.\n'
-                        '• IGNORUJ metadane, ścieżki, kod PHP, puste pola.\n'
-                        '• Przód: konkretne pytanie lub pojęcie.\n'
-                        '• Tył: jasna odpowiedź (2-4 zdania).\n'
-                        '• Źródło: "definicja", "zasada", "proces" lub "przykład".\n'
-                        '• 20-35 fiszek; język = język kursu.\n\n'
-                        'JSON: {"flashcards":[{"front":"...","back":"...","source":"..."}]}'
-                    )},
-                    {'role': 'user', 'content': f'Treść kursu:\n\n{course_text}'},
-                ],
-                max_tokens=4096,
-            )
-            result = json.loads(resp.choices[0].message.content)
-            return [c for c in result.get('flashcards', [])
-                    if c.get('front') and c.get('back')]
-        except Exception as e:
-            print(f'  [!] AI error: {e}')
-            return []
-
-    def _basic_extract_flashcards(self, sections: list) -> list:
-        cards, seen = [], set()
-        for s in sections:
-            title   = s['title'].strip()
-            content = s['content'].strip()
-            if not title or not self._is_educational(content):
-                continue
-            key = title.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            back = content if len(content) <= 400 else content[:397] + '…'
-            cards.append({'front': title, 'back': back, 'source': 'extract'})
-            if len(cards) >= 60:
-                break
-        return cards
-
-    def extract_flashcards(self, input_mbz: str) -> list:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            if input_mbz.lower().endswith('.zip'):
-                with zipfile.ZipFile(input_mbz, 'r') as z:
-                    z.extractall(tmp_path)
-            else:
-                with tarfile.open(input_mbz, 'r:gz') as t:
-                    t.extractall(tmp_path)
-
-            sections = self._collect_course_text(tmp_path)
-            useful   = [s for s in sections if self._is_educational(s.get('content', ''))]
-            print(f'[*] {len(useful)}/{len(sections)} sections have educational content.')
-
-            if self.api_type == 'openai' and self.api_key:
-                print('[*] Calling GPT-4o...')
-                cards = self._ai_generate_flashcards(useful)
-                if cards:
-                    print(f'[+] AI: {len(cards)} flashcards.')
-                    return cards
-                print('[!] AI returned empty – falling back.')
-
-            cards = self._basic_extract_flashcards(useful)
-            print(f'[+] Basic: {len(cards)} flashcards.')
-            return cards
+# Removed flashcard extraction logic.
 
 
 if __name__ == '__main__':

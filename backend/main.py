@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base
 from models import Task, SubTask
-from pipeline import PipelineManager
 from moodle_processor import MoodleMBZProcessor
 
 # Inicjalizacja tabel w bazie
@@ -53,18 +52,29 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
     db = SessionLocal()
     try:
         task = db.query(Task).filter_by(id=task_id).first()
+        if not task:
+            return
+            
         task.status = "processing"
         db.commit()
+        
+        _set_subtask(db, task_id, "Translation Processor", "processing")
 
-        pipeline = PipelineManager(config)
+        processor = MoodleMBZProcessor(
+            source_lang=config.get("source_lang", "en"),
+            target_langs=config.get("target_langs", ["en", "pl"]),
+            api_type=config.get("api_type", "none"),
+            api_key=config.get("api_key", ""),
+        )
+        
+        if config.get("translate"):
+            processor.process_mbz(input_path, output_path)
+        else:
+            # If translation is off, just copy the file over
+            import shutil
+            shutil.copy2(input_path, output_path)
 
-        def on_start(name):
-            _set_subtask(db, task_id, name, "processing")
-
-        def on_done(name, success, log):
-            _set_subtask(db, task_id, name, "completed" if success else "failed", log)
-
-        pipeline.execute(input_path, output_path, on_agent_start=on_start, on_agent_done=on_done)
+        _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
 
         task.status = "completed"
         task.result_filename = Path(output_path).name
@@ -73,6 +83,7 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         task = db.query(Task).filter_by(id=task_id).first()
         if task:
             task.status = "failed"
+            _set_subtask(db, task_id, "Translation Processor", "failed", str(e))
             db.commit()
         print(f"[Pipeline] Error: {e}")
     finally:
@@ -94,7 +105,6 @@ async def create_task(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     translate:     bool = Form(False),
-    generate_h5p:  bool = Form(False),
     source_lang:   str  = Form("en"),
     target_langs:  str  = Form("en,pl"),
     api_type:      str  = Form("none"),
@@ -103,7 +113,6 @@ async def create_task(
 ):
     config = {
         "translate":     translate,
-        "generate_h5p":  generate_h5p,
         "source_lang":   source_lang,
         "target_langs":  [l.strip() for l in target_langs.split(",")],
         "api_type":      api_type,
@@ -182,67 +191,7 @@ def download(task_id: str, db: Session = Depends(get_db)):
 
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Flashcards / AI summarization
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.post("/flashcards")
-async def generate_flashcards(
-    file: UploadFile = File(...),
-    api_type: str = Form("none"),
-    api_key: str = Form(None),
-):
-    """Extract / AI-summarize the course and return flashcards as JSON."""
-    task_id = str(uuid.uuid4())
-    input_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
-
-    with open(input_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
-
-    try:
-        processor = MoodleMBZProcessor(api_type=api_type, api_key=api_key)
-        flashcards = processor.extract_flashcards(str(input_path))
-        return {"flashcards": flashcards, "count": len(flashcards)}
-    except Exception as e:
-        return {"error": str(e), "flashcards": []}
-    finally:
-        if input_path.exists():
-            input_path.unlink()
-
-
-@app.post("/flashcards-csv")
-async def download_flashcards_csv(
-    file: UploadFile = File(...),
-    api_type: str = Form("none"),
-    api_key: str = Form(None),
-):
-    """Extract flashcards and return as Anki-compatible CSV (semicolon-separated)."""
-    task_id = str(uuid.uuid4())
-    input_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
-
-    with open(input_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
-
-    try:
-        processor = MoodleMBZProcessor(api_type=api_type, api_key=api_key)
-        flashcards = processor.extract_flashcards(str(input_path))
-
-        out = io.StringIO()
-        writer = csv.writer(out, delimiter=';')
-        writer.writerow(['Front', 'Back', 'Tags'])
-        for card in flashcards:
-            writer.writerow([card['front'], card['back'], card.get('source', '')])
-
-        return Response(
-            content=out.getvalue().encode('utf-8-sig'),
-            media_type='text/csv; charset=utf-8',
-            headers={'Content-Disposition': 'attachment; filename="flashcards.csv"'},
-        )
-    except Exception as e:
-        return {"error": str(e)}
-    finally:
-        if input_path.exists():
-            input_path.unlink()
+# Removed Flashcards / AI summarization endpoints
 
 
 if __name__ == "__main__":
