@@ -10,3 +10,12 @@ __pycache__/
 *.pyc
 venv/
 .env
+
+# frontend
+/frontend/node_modules/
+
+# backend
+/backend/__pycache__/
+/backend/venv/
+/backend/.env
+/backend/temp/
