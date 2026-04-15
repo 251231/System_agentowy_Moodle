@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moodle AI - Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@300;400;600;700;900&display=swap"
+    rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --primary: #8B0002;
+      --primary-hover: #a50003;
+      --primary-dim: rgba(139, 0, 2, 0.14);
+      --primary-border: rgba(139, 0, 2, 0.35);
+      --bg: #121212;
+      --surface: #1A1A1A;
+      --raised: #272727;
+      --border: rgba(255, 255, 255, 0.07);
+      --border-hi: rgba(255, 255, 255, 0.13);
+      --text: #FFFFFF;
+      --muted: #BFBFBF;
+      --dim: rgba(191, 191, 191, 0.4);
+      --red-err: #e74c3c;
+      /* ← szerokość panelu bocznego — zmień tę wartość */
+      --sidebar-w: 500px;
+    }
+
+    body {
+      font-family: 'Titillium Web', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      grid-template-columns: var(--sidebar-w) 1fr;
+      grid-template-areas: "topbar topbar" "sidebar main";
+      min-height: 100vh;
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      grid-area: topbar;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+    }
+
+    .topbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-mark {
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 900;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .logo-text {
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .topbar-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      margin: 0 4px;
+    }
+
+    .topbar-subtitle {
+      font-size: 0.78rem;
+      color: var(--dim);
+    }
+
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .user-widget {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 5px 0px 5px 5px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .user-avatar svg {
+      width: 16px;
+      height: 16px;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    .user-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .user-chevron svg {
+      color: var(--dim);
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      grid-area: sidebar;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      position: sticky;
+      top: 52px;
+      height: calc(100vh - 52px);
+    }
+
+    .sidebar-section {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-section-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px;
+      height: 47px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.2s;
+    }
+
+    .sidebar-section-header:hover {
+      color: var(--muted);
+    }
+
+    .sidebar-section-header.active {
+      color: var(--text);
+    }
+
+    .step-num {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: var(--primary);
+      border: 1px solid var(--primary);
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .sidebar-section-body {
+      padding: 0 20px 18px;
+    }
+
+    .sidebar-section-body.collapsed {
+      display: none;
+    }
+
+    /* ── Dropzone ── */
+    .dropzone {
+      border: 2px dashed var(--border-hi);
+      border-radius: 6px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .dropzone:hover,
+    .dropzone.has-file {
+      border-color: var(--primary);
+      background: var(--primary-dim);
+    }
+
+    .dropzone input {
+      display: none;
+    }
+
+    .dropzone-icon {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 10px;
+      color: var(--primary);
+    }
+
+    .dropzone-text {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .dropzone.has-file .dropzone-text {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .dropzone-hint {
+      font-size: 0.68rem;
+      color: var(--dim);
+      margin-top: 4px;
+    }
+
+    /* ── Agent Tabs ── */
+    .agent-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .agent-tab {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 9px 10px;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .agent-tab:hover {
+      background: #303030;
+      color: var(--text);
+    }
+
+    .agent-tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    /* ── Agent config separator ── */
+    .agent-config-section {
+      border-top: 1px solid var(--border);
+      margin-top: 12px;
+      padding-top: 12px;
+    }
+
+    .agent-config-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--primary);
+      margin-bottom: 12px;
+    }
+
+    .agent-config-label svg {
+      flex-shrink: 0;
+    }
+
+    .agent-config-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--primary-border);
+    }
+
+    /* ── Form Fields ── */
+    .field {
+      margin-bottom: 14px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.67rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      margin-bottom: 6px;
+    }
+
+    .field select,
+    .field textarea,
+    .field input[type="password"] {
+      width: 100%;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.85rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .field textarea {
+      resize: vertical;
+      min-height: 72px;
+      line-height: 1.5;
+      font-size: 0.82rem;
+    }
+
+    .field select:focus,
+    .field textarea:focus,
+    .field input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(139, 0, 2, 0.18);
+    }
+
+    .field textarea::placeholder {
+      color: var(--dim);
+      font-style: italic;
+    }
+
+    .field select {
+      appearance: none;
+      cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23BFBFBF' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 32px;
+    }
+
+    .field select option {
+      background: var(--surface);
+    }
+
+    /* ── Tag group (multi-select, focus, lang) ── */
+    .tag-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .tag-group.lang-group {
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .tag-item {
+      padding: 5px 11px;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .tag-item:hover {
+      border-color: var(--border-hi);
+      color: var(--text);
+    }
+
+    .tag-item.active {
+      background: var(--primary-dim);
+      border-color: var(--primary-border);
+      color: #fff;
+    }
+
+    /* Lang tags have uppercase style */
+    .lang-group .tag-item {
+      padding: 3px 10px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+    }
+
+    /* Focus tags spacing tweak */
+    .focus-group .tag-item {
+      padding: 4px 10px;
+      border-radius: 3px;
+    }
+
+    /* ── Custom number stepper ── */
+    .number-stepper {
+      display: flex;
+      align-items: center;
+    }
+
+    .stepper-btn {
+      width: 32px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      user-select: none;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .stepper-btn:first-child {
+      border-radius: 4px 0 0 4px;
+      border-right: none;
+    }
+
+    .stepper-btn:last-child {
+      border-radius: 0 4px 4px 0;
+      border-left: none;
+    }
+
+    .stepper-btn:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .stepper-val {
+      width: 42px;
+      height: 34px;
+      text-align: center;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 700;
+      outline: none;
+      -moz-appearance: textfield;
+    }
+
+    .stepper-val::-webkit-inner-spin-button,
+    .stepper-val::-webkit-outer-spin-button {
+      display: none;
+    }
+
+    .stepper-val:focus {
+      border-color: var(--primary);
+    }
+
+    .stepper-hint {
+      font-size: 0.7rem;
+      color: var(--dim);
+      margin-left: 8px;
+    }
+
+    /* ── Submit ── */
+    .sidebar-footer {
+      padding: 16px 20px;
+      margin-top: auto;
+    }
+
+    .btn-run {
+      width: 100%;
+      padding: 12px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+
+    .btn-run:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .btn-run:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .run-hint {
+      font-size: 0.68rem;
+      color: var(--dim);
+      text-align: center;
+      margin-top: 8px;
+      min-height: 14px;
+    }
+
+    /* ── Main ── */
+    .main {
+      grid-area: main;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .task-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 24px;
+      height: 48px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .task-panel-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .filter-tabs {
+      margin-left: auto;
+      display: flex;
+      gap: 4px;
+    }
+
+    .filter-tab {
+      padding: 4px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--dim);
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-tab:hover {
+      color: var(--muted);
+      border-color: var(--border-hi);
+    }
+
+    .filter-tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .task-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--raised) transparent;
+    }
+
+    /* ── Task Card ── */
+    .task-card {
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .task-card:hover {
+      border-color: var(--border-hi);
+    }
+
+    .task-card.status-processing {
+      border-left: 3px solid var(--primary);
+    }
+
+    .task-card.status-failed {
+      border-left: 3px solid var(--red-err);
+    }
+
+    .task-card-main {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+    }
+
+    .task-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+
+    .task-icon.err {
+      color: var(--red-err);
+    }
+
+    .task-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .task-name {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+
+    .task-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .task-agent-tag {
+      font-size: 0.62rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 6px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--dim);
+      border: 1px solid var(--border);
+    }
+
+    .task-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .badge-error {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 3px;
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      font-size: 0.66rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--red-err);
+      background: rgba(231, 76, 60, 0.08);
+    }
+
+    .task-subtasks {
+      display: none;
+      padding: 10px 16px 12px;
+      border-top: 1px solid var(--border);
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .task-card.expanded .task-subtasks {
+      display: flex;
+    }
+
+    .subtask-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 3px;
+      border: 1px solid var(--border);
+    }
+
+    .subtask-spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .subtask-done {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .subtask-fail {
+      color: var(--red-err);
+      font-size: 11px;
+    }
+
+    .subtask-name {
+      font-size: 0.76rem;
+      font-weight: 600;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .subtask-log {
+      font-size: 0.7rem;
+      color: var(--dim);
+      margin-left: auto;
+      text-align: right;
+    }
+
+    /* ── Buttons: download, preview ── */
+    .btn-dl,
+    .btn-preview {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+
+    .btn-dl {
+      background: var(--raised);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .btn-dl:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .btn-dl.disabled {
+      background: transparent;
+      color: var(--dim);
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .btn-preview {
+      background: var(--primary-dim);
+      color: var(--primary);
+      border: 1px solid var(--primary-border);
+    }
+
+    .btn-preview:hover {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: var(--dim);
+      font-size: 0.86rem;
+      padding: 60px 20px;
+    }
+
+    .expand-arrow {
+      color: var(--dim);
+      transition: transform 0.2s;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .task-card.expanded .expand-arrow {
+      transform: rotate(180deg);
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--raised);
+      border-radius: 3px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* ════════════ FLASHCARD DRAWER ════════════ */
+    .drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 300;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .drawer-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(880px, 100vw);
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 301;
+    }
+
+    .drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .drawer-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .drawer-subtitle {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-left: 4px;
+    }
+
+    .drawer-close {
+      margin-left: auto;
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--muted);
+      transition: all 0.15s;
+    }
+
+    .drawer-close:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    /* Counter bar */
+    .drawer-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 24px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--raised);
+    }
+
+    .drawer-counter {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .drawer-counter span {
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      scrollbar-width: thin;
+      scrollbar-color: var(--raised) transparent;
+    }
+
+    /* Siatka aktywnych fiszek */
+    .flashcard-grid {
+      padding: 20px 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
+      align-content: start;
+    }
+
+    /* Sekcja usuniętych fiszek */
+    .removed-section {
+      display: none;
+      border-top: 2px dashed var(--border);
+      padding: 16px 24px 24px;
+    }
+
+    .removed-section.has-items {
+      display: block;
+    }
+
+    .removed-section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      margin-bottom: 14px;
+      user-select: none;
+    }
+
+    .removed-section-header svg {
+      color: var(--dim);
+      flex-shrink: 0;
+    }
+
+    .removed-count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      font-size: 0.6rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .removed-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
+      align-content: start;
+    }
+
+    /* Flip card */
+    .fc-wrap {
+      perspective: 1000px;
+      height: 220px;
+    }
+
+    .fc-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+      transition: transform 0.45s ease;
+      cursor: pointer;
+    }
+
+    .fc-wrap.flipped .fc-inner {
+      transform: rotateY(180deg);
+    }
+
+    .fc-face {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .fc-face.back {
+      transform: rotateY(180deg);
+      background: #1e1e1e;
+    }
+
+    /*
+      opacity zmienia się w połowie obrotu (0.225s = 0.45s / 2),
+      dzięki czemu karta jest niewidoczna gdy „stoi na sztorc".
+    */
+    .fc-face.front,
+    .fc-face.back {
+      transition: opacity 0s 0.225s;
+    }
+
+    .fc-face.back {
+      opacity: 0;
+    }
+
+    .fc-wrap.flipped .fc-face.back {
+      opacity: 1;
+    }
+
+    .fc-wrap.flipped .fc-face.front {
+      opacity: 0;
+    }
+
+    .fc-wrap:hover .fc-face {
+      border-color: var(--border-hi);
+    }
+
+    .fc-label {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--dim);
+      margin-bottom: 7px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .fc-label-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--primary);
+      flex-shrink: 0;
+    }
+
+    .fc-text {
+      flex: 1;
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.55;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--raised) transparent;
+      padding-right: 2px;
+    }
+
+    .fc-face.back .fc-text {
+      font-size: 0.81rem;
+      color: var(--muted);
+    }
+
+    .fc-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      margin-top: 6px;
+    }
+
+    .fc-hint {
+      font-size: 0.62rem;
+      color: var(--dim);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Remove / Restore button */
+    .fc-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 9px;
+      border-radius: 3px;
+      border: 1px solid transparent;
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .fc-toggle.remove {
+      color: var(--dim);
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .fc-toggle.remove:hover {
+      color: var(--red-err);
+      border-color: rgba(231, 76, 60, 0.3);
+      background: rgba(231, 76, 60, 0.08);
+    }
+
+    .fc-toggle.restore {
+      color: var(--primary);
+      border-color: var(--primary-border);
+      background: var(--primary-dim);
+    }
+
+    .fc-toggle.restore:hover {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    /* Drawer footer */
+    .drawer-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 24px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--surface);
+    }
+
+    .drawer-footer-info {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .drawer-footer-info strong {
+      color: var(--text);
+    }
+
+    .btn-approve {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 22px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-approve:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-cancel-drawer {
+      padding: 10px 18px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: 'Titillium Web', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-cancel-drawer:hover {
+      border-color: var(--border-hi);
+      color: var(--text);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="layout">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-logo">
+        <div class="logo-mark">M</div>
+        <span class="logo-text">Moodle AI</span>
+      </div>
+      <div class="topbar-right">
+        <div class="user-widget">
+          <div class="user-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+            </svg>
+          </div>
+          <span class="user-name">Nazwa użytkownika</span>
+          <span class="user-chevron"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+
+      <!-- Krok 1: Plik -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header active" onclick="toggleSection(1)">
+          <span class="step-num">1</span>Plik źródłowy
+        </div>
+        <div class="sidebar-section-body" id="body-1">
+          <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()"
+            ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+            <input type="file" id="fileInput" accept=".mbz" onchange="handleFile(this)" />
+            <div class="dropzone-icon">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </div>
+            <div class="dropzone-text" id="dropzone-text">Przeciągnij plik .mbz<br>lub kliknij aby wybrać</div>
+            <div class="dropzone-hint" id="dropzone-hint">Moodle Backup Archive</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Krok 2: Agenty -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header active" onclick="toggleSection(2)">
+          <span class="step-num">2</span>Wybierz agenty
+        </div>
+        <div class="sidebar-section-body" id="body-2">
+          <div class="agent-tabs">
+            <button class="agent-tab active" id="tab-translate" onclick="toggleTab('translate')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+              Tłumaczenie
+            </button>
+            <button class="agent-tab" id="tab-h5p" onclick="toggleTab('h5p')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+              Fiszki AI
+            </button>
+          </div>
+
+          <!-- Opcje tłumaczenia -->
+          <div id="translate-config" class="agent-config-section">
+            <div class="agent-config-label">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10z" />
+              </svg>
+              Opcje tłumaczenia
+            </div>
+            <div class="field">
+              <label>Język źródłowy</label>
+              <select>
+                <option>Polski (PL)</option>
+                <option>Angielski (EN)</option>
+                <option>Niemiecki (DE)</option>
+                <option>Francuski (FR)</option>
+                <option>Hiszpański (ES)</option>
+                <option>Czeski (CS)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Języki docelowe</label>
+              <div class="tag-group lang-group">
+                <span class="tag-item active" onclick="this.classList.toggle('active')">PL</span>
+                <span class="tag-item active" onclick="this.classList.toggle('active')">EN</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">DE</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">FR</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">ES</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">IT</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">CS</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">UK</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Opcje fiszek -->
+          <div class="agent-config-section hidden" id="h5p-config">
+            <div class="agent-config-label">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+              Opcje fiszek
+            </div>
+            <div class="field">
+              <label>Typ fiszek (multi-wybór)</label>
+              <div class="tag-group">
+                <span class="tag-item active" onclick="this.classList.toggle('active')">Pytanie / Odpowiedź</span>
+                <span class="tag-item active" onclick="this.classList.toggle('active')">Pojęcie / Definicja</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Uzupełnianie luk</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Prawda / Fałsz</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Poziom trudności</label>
+              <select>
+                <option>Mieszany (auto)</option>
+                <option>Łatwy</option>
+                <option>Średni</option>
+                <option>Trudny</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Liczba fiszek na moduł</label>
+              <div style="display:flex;align-items:center;">
+                <div class="number-stepper">
+                  <button class="stepper-btn" onclick="stepperChange(-1)">−</button>
+                  <input class="stepper-val" type="number" id="stepper-val" value="5" min="1" max="30" readonly />
+                  <button class="stepper-btn" onclick="stepperChange(1)">+</button>
+                </div>
+                <span class="stepper-hint">fiszek / moduł (1–30)</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Obszary tematyczne</label>
+              <div class="tag-group focus-group">
+                <span class="tag-item active" onclick="this.classList.toggle('active')">Pojęcia kluczowe</span>
+                <span class="tag-item active" onclick="this.classList.toggle('active')">Definicje</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Algorytmy</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Wzory</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Przykłady kodu</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Porównania</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Dodatkowe instrukcje dla AI</label>
+              <textarea
+                placeholder="np. Skup się na zastosowaniach praktycznych. Używaj przykładów w Pythonie. Unikaj teorii formalnej..."></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Krok 3: Silnik -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header active" onclick="toggleSection(3)">
+          <span class="step-num">3</span>Silnik AI
+        </div>
+        <div class="sidebar-section-body" id="body-3">
+          <div class="field">
+            <label>Silnik tłumaczenia</label>
+            <select id="engine" onchange="handleEngine()">
+              <option value="none">Mock (bez AI)</option>
+              <option value="openai">OpenAI GPT-4o</option>
+              <option value="deepl">DeepL</option>
+            </select>
+          </div>
+          <div class="field hidden" id="api-key-field">
+            <label>Klucz API</label>
+            <input type="password" placeholder="sk-..." />
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn-run" id="btn-run" onclick="handleSubmit()" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          Uruchom Agenty
+        </button>
+        <div class="run-hint" id="run-hint">Wybierz plik aby kontynuować</div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="task-panel-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          style="color:var(--dim)">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M3 9h18M9 21V9" />
+        </svg>
+        <span class="task-panel-title">Monitor Zadań</span>
+        <div class="filter-tabs">
+          <button class="filter-tab active" onclick="filterTasks('all',this)">Wszystkie</button>
+          <button class="filter-tab" onclick="filterTasks('processing',this)">W toku</button>
+          <button class="filter-tab" onclick="filterTasks('completed',this)">Ukończone</button>
+          <button class="filter-tab" onclick="filterTasks('failed',this)">Błędy</button>
+        </div>
+      </div>
+      <div class="task-list" id="task-list"></div>
+    </main>
+  </div>
+
+  <!-- FLASHCARD DRAWER -->
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        style="color:var(--primary)">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8M12 17v4" />
+      </svg>
+      <span class="drawer-title">Podgląd Fiszek</span>
+      <span class="drawer-subtitle" id="drawer-task-name"></span>
+      <div class="drawer-close" onclick="closeDrawer()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </div>
+    </div>
+
+    <div class="drawer-controls">
+      <span class="drawer-counter">Zaznaczone: <span id="selected-count">12</span> / <span id="total-count">12</span>
+        fiszek</span>
+    </div>
+
+    <div class="drawer-body">
+      <div class="flashcard-grid" id="flashcard-grid"></div>
+
+      <!-- Sekcja usuniętych fiszek -->
+      <div class="removed-section" id="removed-section">
+        <div class="removed-section-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+          Usunięte fiszki
+          <span class="removed-count-badge" id="removed-count">0</span>
+        </div>
+        <div class="removed-grid" id="removed-grid"></div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <div class="drawer-footer-info">
+        Zaznaczone fiszki zostaną dołączone do kursu.<br>
+        <strong id="footer-count">12 fiszek</strong> zostanie dodanych.
+      </div>
+      <button class="btn-cancel-drawer" onclick="closeDrawer()">Anuluj</button>
+      <button class="btn-approve" onclick="approveCards()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        Zatwierdź i zastosuj
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // Icons
+    const iconFile = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    const iconX = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    const iconDown = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`;
+    const iconDl = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+    const iconCards = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`;
+    const iconFlip = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4"/></svg>`;
+
+    // Mock tasks
+    const mockTasks = [
+      {
+        id: 'a1b2c3d4', filename: 'programowanie-obiektowe-java.mbz', status: 'processing', agents: ['translate'], subtasks: [
+          { agent: 'Tłumacz', status: 'completed', log: 'Moduł 1/3 gotowy' },
+          { agent: 'Tłumacz', status: 'processing', log: 'Tłumaczenie modułu 2...' },
+        ]
+      },
+      {
+        id: 'b2c3d4e5', filename: 'algorytmy-i-struktury-danych.mbz', status: 'completed', agents: ['translate', 'h5p'], subtasks: [
+          { agent: 'Tłumacz', status: 'completed', log: 'Wszystkie moduły przetłumaczone' },
+          { agent: 'H5P Agent', status: 'completed', log: '12 fiszek wygenerowanych' },
+        ]
+      },
+      {
+        id: 'c3d4e5f6', filename: 'bazy-danych-sql.mbz', status: 'failed', agents: ['translate'], subtasks: [
+          { agent: 'Tłumacz', status: 'failed', log: 'Błąd: nieprawidłowy format pliku' }
+        ]
+      },
+      {
+        id: 'e5f6a7b8', filename: 'systemy-operacyjne-linux.mbz', status: 'completed', agents: ['h5p'], subtasks: [
+          { agent: 'H5P Agent', status: 'completed', log: '9 fiszek wygenerowanych' }
+        ]
+      },
+    ];
+
+    // Mock flashcards
+    const mockFlashcards = [
+      { id: 1, front: 'Czym jest programowanie obiektowe (OOP)?', back: 'Paradygmat programowania oparty na obiektach zawierających dane (pola) i zachowania (metody). Cztery filary: enkapsulacja, dziedziczenie, polimorfizm, abstrakcja.' },
+      { id: 2, front: 'Co to jest rekurencja?', back: 'Technika, w której funkcja wywołuje samą siebie. Każde wywołanie recursywne musi zbliżać się do warunku stopu (przypadku bazowego), aby uniknąć nieskończonej pętli.' },
+      { id: 3, front: 'Czym jest notacja O(n)?', back: 'Notacja Wielkiego O opisuje złożoność czasową lub pamięciową algorytmu w zależności od rozmiaru danych wejściowych n. Np. O(1) – stała, O(n) – liniowa, O(n²) – kwadratowa.' },
+      { id: 4, front: 'Co to jest lista powiązana (Linked List)?', back: 'Liniowa struktura danych, w której każdy element (węzeł) przechowuje wartość oraz wskaźnik do następnego węzła. Umożliwia efektywne wstawianie i usuwanie elementów.' },
+      { id: 5, front: 'Czym różni się stos od kolejki?', back: 'Stos (Stack) działa na zasadzie LIFO (Last In, First Out). Kolejka (Queue) działa na zasadzie FIFO (First In, First Out). Oba są abstrakcyjnymi strukturami danych.' },
+      { id: 6, front: 'Co to jest polimorfizm?', back: 'Zdolność obiektów różnych klas do odpowiadania na te same komunikaty (metody) w różny sposób. Pozwala traktować obiekty różnych klas przez wspólny interfejs.' },
+      { id: 7, front: 'Czym jest SQL?', back: 'Structured Query Language – język do zarządzania relacyjnymi bazami danych. Umożliwia tworzenie, modyfikowanie i odpytywanie baz danych (SELECT, INSERT, UPDATE, DELETE).' },
+      { id: 8, front: 'Co to jest REST API?', back: 'Architektura komunikacji klient-serwer oparta na protokole HTTP. Zasoby identyfikowane są przez URL, a operacje realizowane przez metody HTTP: GET, POST, PUT, DELETE.' },
+      { id: 9, front: 'Czym jest algorytm Quick Sort?', back: 'Algorytm sortowania oparty na strategii dziel i zwyciężaj. Wybiera element pivot, dzieli tablicę na dwie części i rekurencyjnie sortuje każdą z nich. Złożoność średnio O(n log n).' },
+      { id: 10, front: 'Co to jest dziedziczenie w OOP?', back: 'Mechanizm, w którym klasa pochodna (child) przejmuje pola i metody klasy bazowej (parent). Umożliwia ponowne użycie kodu i tworzenie hierarchii klas.' },
+      { id: 11, front: 'Czym jest protokół HTTP?', back: 'HyperText Transfer Protocol – protokół komunikacyjny warstwy aplikacji, używany do przesyłania danych w sieci WWW. Oparty na modelu zapytanie-odpowiedź między klientem a serwerem.' },
+      { id: 12, front: 'Co to jest zmienna i stała w programowaniu?', back: 'Zmienna to nazwany obszar pamięci, którego wartość może się zmieniać w trakcie działania programu. Stała (const) ma wartość przypisaną raz i niezmienną przez cały czas życia programu.' },
+    ];
+
+    let currentFilter = 'all';
+    let selectedFile = null;
+    let translateActive = true;
+    let h5pActive = false;
+    let expandedCards = new Set();
+    let flippedCards = new Set();
+
+    // ── Stepper ──
+    function stepperChange(delta) {
+      const el = document.getElementById('stepper-val');
+      let v = parseInt(el.value) + delta;
+      if (v < 1) v = 1;
+      if (v > 30) v = 30;
+      el.value = v;
+    }
+
+    // ── Task rendering ──
+    function renderTasks() {
+      const list = document.getElementById('task-list');
+      const filtered = currentFilter === 'all' ? mockTasks : mockTasks.filter(t => t.status === currentFilter);
+      const agentLabels = { translate: 'Tłumaczenie', h5p: 'Fiszki AI' };
+
+      if (!filtered.length) {
+        list.innerHTML = `<div class="empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" style="opacity:.3;color:var(--muted)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg><p>Brak zadań w tej kategorii.</p></div>`;
+        return;
+      }
+
+      list.innerHTML = filtered.map(task => {
+        const expanded = expandedCards.has(task.id);
+        const hasH5p = task.agents.includes('h5p');
+
+        let iconHTML, iconClass = 'task-icon';
+        if (task.status === 'processing') { iconHTML = `<div class="spinner"></div>`; }
+        else if (task.status === 'failed') { iconHTML = iconX; iconClass = 'task-icon err'; }
+        else { iconHTML = iconFile; }
+
+        let rightHTML = '';
+        if (task.status === 'processing') {
+          rightHTML = `<span style="font-size:.72rem;color:var(--muted);font-weight:600">Przetwarzanie...</span>`;
+        } else if (task.status === 'failed') {
+          rightHTML = `<span class="badge-error">${iconX} Błąd</span>`;
+        } else {
+          rightHTML = `
+          ${hasH5p ? `<button class="btn-preview" onclick="event.stopPropagation();openDrawer('${task.id}','${task.filename}')">${iconCards} Podgląd fiszek</button>` : ''}
+          <button class="btn-dl${hasH5p ? '' : ' disabled'}" ${hasH5p ? `onclick="event.stopPropagation();alert('Pobieranie: ${task.filename}')"` : 'disabled title="Dostępne po wygenerowaniu fiszek"'}>${iconDl} Pobierz</button>`;
+        }
+
+        const subtasksHTML = task.subtasks.map(st => {
+          const icon = st.status === 'processing' ? `<div class="subtask-spinner"></div>` : st.status === 'completed' ? `<span class="subtask-done">✓</span>` : `<span class="subtask-fail">✕</span>`;
+          return `<div class="subtask-row">${icon}<span class="subtask-name">${st.agent}</span><span class="subtask-log">${st.log}</span></div>`;
+        }).join('');
+
+        const hasExpandable = task.subtasks.length > 0;
+        const iconStyle = task.status === 'processing' ? 'background:transparent;border:none;' : '';
+
+        return `<div class="task-card status-${task.status}${expanded ? ' expanded' : ''}" ${hasExpandable ? `onclick="toggleCard('${task.id}')"` : ''}>
+        <div class="task-card-main">
+          <div class="${iconClass}" style="${iconStyle}">${iconHTML}</div>
+          <div class="task-info">
+            <div class="task-name">${task.filename}</div>
+            <div class="task-meta">
+              ${task.agents.map(a => `<span class="task-agent-tag">${agentLabels[a]}</span>`).join('')}
+            </div>
+          </div>
+          <div class="task-right">${rightHTML}${hasExpandable ? `<span class="expand-arrow">${iconDown}</span>` : ''}</div>
+        </div>
+        ${hasExpandable ? `<div class="task-subtasks">${subtasksHTML}</div>` : ''}
+      </div>`;
+      }).join('');
+    }
+
+    function toggleCard(id) { expandedCards.has(id) ? expandedCards.delete(id) : expandedCards.add(id); renderTasks(); }
+    function filterTasks(f, btn) { currentFilter = f; document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderTasks(); }
+
+    // ── Drawer ──
+    function openDrawer(taskId, filename) {
+      document.getElementById('drawer-task-name').textContent = filename;
+      mockFlashcards.forEach(c => c.removed = false);
+      flippedCards.clear();
+      renderCards();
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawer-overlay').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('drawer-overlay').classList.remove('open');
+      document.body.style.overflow = '';
+    }
+
+    function renderCards() {
+      const activeCards = mockFlashcards.filter(c => !c.removed);
+      const removedCards = mockFlashcards.filter(c => c.removed);
+
+      document.getElementById('selected-count').textContent = activeCards.length;
+      document.getElementById('total-count').textContent = mockFlashcards.length;
+      document.getElementById('footer-count').textContent = `${activeCards.length} fiszek`;
+
+      function cardHTML(card) {
+        const isFlipped = flippedCards.has(card.id);
+        const toggleBtn = card.removed
+          ? `<button class="fc-toggle restore" onclick="event.stopPropagation();restoreCard(${card.id})">${iconFlip} Przywóć</button>`
+          : `<button class="fc-toggle remove"  onclick="event.stopPropagation();removeCard(${card.id})">${iconX} Usuń</button>`;
+        return `<div class="fc-wrap${isFlipped ? ' flipped' : ''}" id="fc-${card.id}">
+          <div class="fc-inner" onclick="flipCard(${card.id})">
+            <div class="fc-face front">
+              <div class="fc-label"><span class="fc-label-dot"></span> Pytanie</div>
+              <div class="fc-text">${card.front}</div>
+              <div class="fc-actions"><span class="fc-hint">${iconFlip} obróć</span>${toggleBtn}</div>
+            </div>
+            <div class="fc-face back">
+              <div class="fc-label" style="color:var(--primary)"><span class="fc-label-dot"></span> Odpowiedź</div>
+              <div class="fc-text">${card.back}</div>
+              <div class="fc-actions"><span class="fc-hint">${iconFlip} obróć</span>${toggleBtn}</div>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      document.getElementById('flashcard-grid').innerHTML = activeCards.map(cardHTML).join('');
+
+      const removedSection = document.getElementById('removed-section');
+      if (removedCards.length > 0) {
+        removedSection.classList.add('has-items');
+        document.getElementById('removed-count').textContent = removedCards.length;
+        document.getElementById('removed-grid').innerHTML = removedCards.map(cardHTML).join('');
+      } else {
+        removedSection.classList.remove('has-items');
+      }
+    }
+
+    function flipCard(id) {
+      flippedCards.has(id) ? flippedCards.delete(id) : flippedCards.add(id);
+      const el = document.getElementById('fc-' + id);
+      if (el) el.classList.toggle('flipped');
+    }
+
+    function _updateCounts() {
+      const active = mockFlashcards.filter(c => !c.removed).length;
+      const removed = mockFlashcards.filter(c => c.removed).length;
+      document.getElementById('selected-count').textContent = active;
+      document.getElementById('footer-count').textContent = `${active} fiszek`;
+      document.getElementById('removed-count').textContent = removed;
+    }
+
+    function removeCard(id) {
+      const c = mockFlashcards.find(c => c.id === id);
+      if (!c) return;
+      c.removed = true;
+
+      const wrap = document.getElementById('fc-' + id);
+      if (wrap) {
+        wrap.querySelectorAll('.fc-toggle').forEach(btn => {
+          btn.className = 'fc-toggle restore';
+          btn.innerHTML = `${iconFlip} Przywróć`;
+          btn.onclick = (e) => { e.stopPropagation(); restoreCard(id); };
+        });
+        document.getElementById('removed-grid').appendChild(wrap);
+      }
+
+      document.getElementById('removed-section').classList.add('has-items');
+      _updateCounts();
+    }
+
+    function restoreCard(id) {
+      const c = mockFlashcards.find(c => c.id === id);
+      if (!c) return;
+      c.removed = false;
+
+      const wrap = document.getElementById('fc-' + id);
+      if (wrap) {
+        wrap.querySelectorAll('.fc-toggle').forEach(btn => {
+          btn.className = 'fc-toggle remove';
+          btn.innerHTML = `${iconX} Usuń`;
+          btn.onclick = (e) => { e.stopPropagation(); removeCard(id); };
+        });
+        document.getElementById('flashcard-grid').appendChild(wrap);
+      }
+
+      const removedGrid = document.getElementById('removed-grid');
+      if (!removedGrid.children.length) {
+        document.getElementById('removed-section').classList.remove('has-items');
+      }
+      _updateCounts();
+    }
+
+    function approveCards() {
+      const count = mockFlashcards.filter(c => !c.removed).length;
+      alert(`${count} fiszek zostanie dołączonych do kursu.\n(W wersji produkcyjnej uruchomiłoby to agenta modyfikującego kurs.)`);
+      closeDrawer();
+    }
+
+    // ── Sidebar ──
+    function handleFile(input) { if (input.files?.[0]) { selectedFile = input.files[0]; updateDropzone(selectedFile.name); } }
+    function handleDrop(e) { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) { selectedFile = f; updateDropzone(f.name); } }
+    function updateDropzone(name) { document.getElementById('dropzone').classList.add('has-file'); document.getElementById('dropzone-text').textContent = name; document.getElementById('dropzone-hint').textContent = 'Kliknij aby zmienić plik'; updateRunButton(); }
+    function toggleTab(which) {
+      if (which === 'translate') {
+        translateActive = !translateActive;
+        document.getElementById('tab-translate').classList.toggle('active', translateActive);
+        document.getElementById('translate-config').style.display = translateActive ? '' : 'none';
+      } else {
+        h5pActive = !h5pActive;
+        document.getElementById('tab-h5p').classList.toggle('active', h5pActive);
+        document.getElementById('h5p-config').classList.toggle('hidden', !h5pActive);
+      }
+      updateRunButton();
+    }
+    function handleEngine() { document.getElementById('api-key-field').classList.toggle('hidden', document.getElementById('engine').value === 'none'); }
+    function updateRunButton() { const ready = selectedFile && (translateActive || h5pActive); document.getElementById('btn-run').disabled = !ready; let hint = ''; if (!selectedFile) hint = 'Wybierz plik aby kontynuować'; else if (!translateActive && !h5pActive) hint = 'Wybierz co najmniej jeden agent'; document.getElementById('run-hint').textContent = hint; }
+    function handleSubmit() {
+      const btn = document.getElementById('btn-run'); btn.disabled = true;
+      btn.innerHTML = `<div class="spinner" style="border-color:rgba(255,255,255,.2);border-top-color:#fff;"></div> Wysyłanie...`;
+      setTimeout(() => {
+        const agents = [...(translateActive ? ['translate'] : []), ...(h5pActive ? ['h5p'] : [])];
+        const t = { id: Math.random().toString(36).slice(2, 10), filename: selectedFile ? selectedFile.name : 'nowy-plik.mbz', status: 'pending', agents, subtasks: [] };
+        mockTasks.unshift(t); renderTasks();
+        setTimeout(() => { t.status = 'processing'; t.subtasks = [{ agent: agents.includes('translate') ? 'Tłumacz' : 'H5P Agent', status: 'processing', log: 'Inicjalizacja...' }]; renderTasks(); }, 1000);
+        btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Uruchom Agenty`;
+        btn.disabled = false;
+        document.getElementById('run-hint').textContent = 'Zadanie dodane do kolejki';
+        setTimeout(() => { document.getElementById('run-hint').textContent = ''; }, 3000);
+      }, 1600);
+    }
+    function toggleSection(n) { document.getElementById('body-' + n).classList.toggle('collapsed'); }
+
+    renderTasks();
+  </script>
+</body>
+
+</html>
