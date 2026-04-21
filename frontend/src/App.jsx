@@ -65,12 +65,20 @@ const App = () => {
   };
 
   // ── pomocnicze ───────────────────────────────────────────────────────────
+  const handleCancel = async (id) => {
+    try {
+      await axios.post(`${API}/tasks/${id}/cancel`);
+      fetchTasks();
+    } catch (_) {}
+  };
+
   const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
 
   const statusIcon = (s) => ({
     completed: <CheckCircle2 size={14} className="icon-green" />,
     processing: <Loader2 size={14} className="icon-blue spin" />,
     failed: <AlertCircle size={14} className="icon-red" />,
+    cancelled: <AlertCircle size={14} className="icon-muted" />,
   }[s] ?? <Clock size={14} className="icon-muted" />);
 
   const statusLabel = (s) => ({
@@ -78,6 +86,7 @@ const App = () => {
     processing: 'Przetwarzanie',
     failed: 'Błąd',
     pending: 'Oczekuje',
+    cancelled: 'Anulowano',
   }[s] ?? s);
 
   return (
@@ -159,6 +168,7 @@ const App = () => {
                   <option value="none">Mock (bez AI)</option>
                   <option value="openai">OpenAI (GPT-4o)</option>
                   <option value="deepl">DeepL</option>
+                  <option value="gemini">Gemini AI Studio</option>
                 </select>
               </div>
 
@@ -219,6 +229,9 @@ const App = () => {
                         <span className="task-id">#{task.id.split('-')[0]}</span>
                       </div>
                       <div className="task-right">
+                        {(task.status === 'processing' || task.status === 'pending') && (
+                          <button className="btn-cancel" style={{ marginRight: '10px', padding: '4px 8px', fontSize: '12px', background: 'transparent', border: '1px solid #f87171', color: '#f87171', borderRadius: '4px', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); handleCancel(task.id); }}>Zatrzymaj</button>
+                        )}
                         <span className={`status-badge badge-${task.status}`}>
                           {statusIcon(task.status)}
                           {statusLabel(task.status)}
