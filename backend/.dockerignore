@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+venv
+.env
+.git
+temp
+moodle_agents.db
+moodle_agents_local.db

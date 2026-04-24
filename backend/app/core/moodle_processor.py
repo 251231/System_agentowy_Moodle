@@ -46,11 +46,12 @@ CHUNK_CHARS  = 8000   # max chars per single OpenAI call
 
 class MoodleMBZProcessor:
     def __init__(self, source_lang='en', target_langs=None,
-                 api_type='none', api_key=None):
+                 api_type='none', api_key=None, cancel_callback=None):
         self.source_lang  = source_lang
         self.target_langs = target_langs or ['en', 'pl']
         self.api_type     = api_type
         self.api_key      = api_key
+        self.cancel_callback = cancel_callback
 
     # ─────────────────────────────────────────────────────────────── translation
 
@@ -61,6 +62,8 @@ class MoodleMBZProcessor:
             return self._openai_translate(html_or_text, target_lang)
         if self.api_type == 'deepl' and self.api_key:
             return self._deepl_translate(html_or_text, target_lang)
+        if self.api_type == 'gemini' and self.api_key:
+            return self._gemini_translate(html_or_text, target_lang)
         return f'[{target_lang}] {html_or_text}'
 
     def _openai_translate(self, content: str, target_lang: str) -> str:
@@ -110,6 +113,68 @@ class MoodleMBZProcessor:
         except Exception as e:
             print(f'  [!] DeepL error: {e}')
             return content
+
+    def _gemini_translate(self, content: str, target_lang: str) -> str:
+        if len(content) <= CHUNK_CHARS:
+            return self._gemini_call(content, target_lang)
+        # Split long HTML at paragraph boundaries
+        parts = re.split(r'(?<=</p>)', content)
+        translated, chunk = [], ''
+        for part in parts:
+            if len(chunk) + len(part) > CHUNK_CHARS and chunk:
+                translated.append(self._gemini_call(chunk, target_lang))
+                chunk = part
+            else:
+                chunk += part
+        if chunk:
+            translated.append(self._gemini_call(chunk, target_lang))
+        return ''.join(translated)
+
+    def _gemini_call(self, content: str, target_lang: str) -> str:
+        import time
+        import re as _re
+        try:
+            from google import genai
+        except ImportError:
+            print('  [!] google-genai not installed')
+            return content
+
+        client = genai.Client(api_key=self.api_key)
+        prompt = (f'You are a professional translator. '
+                  f'Translate from {self.source_lang} to {target_lang}. '
+                  f'Preserve ALL HTML tags and their attributes exactly. '
+                  f'Return ONLY the translated content:\n\n{content}')
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                resp = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt
+                )
+                return resp.text.strip()
+            except Exception as e:
+                err_str = str(e)
+                print(f'  [!] Gemini error (attempt {attempt+1}/{max_retries}): {err_str[:200]}')
+
+                is_rate_limit = any(kw in err_str.lower() for kw in [
+                    '429', 'resourceexhausted', 'quota', 'too many requests', 'rate limit'
+                ])
+
+                if not is_rate_limit or attempt == max_retries - 1:
+                    return content
+
+                # Try to parse retry-after seconds from error message
+                m = _re.search(r'retry[^0-9]{0,20}(\d+)', err_str, _re.IGNORECASE)
+                if m:
+                    wait_s = max(int(m.group(1)), 5)
+                else:
+                    wait_s = min(5 * (2 ** attempt), 120)  # 5, 10, 20, 40, 80... max 120s
+
+                print(f'  [!] Rate limit — czekam {wait_s}s (attempt {attempt+1}) ...')
+                time.sleep(wait_s)
+
+        return content
 
     def wrap_mlang(self, translations: dict) -> str:
         return ''.join(
@@ -339,6 +404,8 @@ class MoodleMBZProcessor:
         with tarfile.open(input_mbz, 'r:gz') as tar_in:
             with tarfile.open(output_mbz, 'w:gz', format=tar_in.format) as tar_out:
                 for member in tar_in:
+                    if self.cancel_callback:
+                        self.cancel_callback()
                     if not member.isfile():
                         # Directories, symlinks, etc. — copy header verbatim
                         tar_out.addfile(member)
@@ -380,6 +447,8 @@ class MoodleMBZProcessor:
              zipfile.ZipFile(output_mbz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
 
             for info in zip_in.infolist():
+                if self.cancel_callback:
+                    self.cancel_callback()
                 data = zip_in.read(info.filename)
                 if self._should_process(info.filename):
                     new_data = self.process_xml_bytes(data, info.filename)
