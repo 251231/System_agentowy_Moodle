@@ -9,9 +9,7 @@ jobs:
   deploy-backend:
     name: Deploy Backend
     runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.modified, 'backend/') ||
-      contains(github.event.head_commit.added, 'backend/')
+    if: contains(toJson(github.event.commits), 'backend/')
 
     steps:
       - name: Trigger Render Backend Deploy
@@ -24,9 +22,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.modified, 'frontend/') ||
-      contains(github.event.head_commit.added, 'frontend/')
+    if: contains(toJson(github.event.commits), 'frontend/')
 
     steps:
       - name: Trigger Render Frontend Deploy
