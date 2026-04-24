@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API = 'http://localhost:8000';
+const API = import.meta.env.VITE_API_URL ?? '';
 
 // ── SVG icons ──────────────────────────────────────────────────────────────
 const IconUpload = () => (
