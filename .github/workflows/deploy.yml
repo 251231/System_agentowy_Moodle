@@ -1,0 +1,48 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.modified, 'backend/') ||
+      contains(github.event.head_commit.added, 'backend/')
+
+    steps:
+      - name: Trigger Render Backend Deploy
+        run: |
+          curl -s "${{ secrets.RENDER_BACKEND_HOOK }}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --fail
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.modified, 'frontend/') ||
+      contains(github.event.head_commit.added, 'frontend/')
+
+    steps:
+      - name: Trigger Render Frontend Deploy
+        run: |
+          curl -s "${{ secrets.RENDER_FRONTEND_HOOK }}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            --fail
+
+  notify:
+    name: Notify Status
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: always()
+    steps:
+      - name: Print deploy summary
+        run: |
+          echo "Backend deploy: ${{ needs.deploy-backend.result }}"
+          echo "Frontend deploy: ${{ needs.deploy-frontend.result }}"
