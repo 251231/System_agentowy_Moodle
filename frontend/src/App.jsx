@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 
+// test deploy
 const API = import.meta.env.VITE_API_URL ?? '';
 
 // ── SVG icons ──────────────────────────────────────────────────────────────
