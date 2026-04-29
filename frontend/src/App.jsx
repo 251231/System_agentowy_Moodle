@@ -295,6 +295,7 @@ const App = () => {
                   onChange={e => setConfig({ ...config, api_type: e.target.value })}
                 >
                   <option value="none">Mock (bez AI)</option>
+                  <option value="ollama">Ollama (lokalnie)</option>
                   <option value="openai">OpenAI GPT-4o</option>
                   <option value="deepl">DeepL</option>
                   <option value="gemini">Gemini AI Studio</option>

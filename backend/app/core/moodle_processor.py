@@ -52,6 +52,9 @@ class MoodleMBZProcessor:
         self.api_type     = api_type
         self.api_key      = api_key
         self.cancel_callback = cancel_callback
+        
+        self.test_limit = None
+        self.translated_files_count = 0
 
     # ─────────────────────────────────────────────────────────────── translation
 
@@ -64,6 +67,8 @@ class MoodleMBZProcessor:
             return self._deepl_translate(html_or_text, target_lang)
         if self.api_type == 'gemini' and self.api_key:
             return self._gemini_translate(html_or_text, target_lang)
+        if self.api_type == 'ollama':
+            return self._ollama_translate(html_or_text, target_lang)
         return f'[{target_lang}] {html_or_text}'
 
     def _openai_translate(self, content: str, target_lang: str) -> str:
@@ -176,6 +181,86 @@ class MoodleMBZProcessor:
 
         return content
 
+    def _ollama_translate(self, content: str, target_lang: str) -> str:
+        import re
+        if len(content) <= CHUNK_CHARS:
+            return self._ollama_call(content, target_lang)
+            
+        parts = re.split(r'(?<=</p>)', content)
+        translated, chunk = [], ''
+        for part in parts:
+            if len(chunk) + len(part) > CHUNK_CHARS and chunk:
+                translated.append(self._ollama_call(chunk, target_lang))
+                chunk = part
+            else:
+                chunk += part
+        if chunk:
+            translated.append(self._ollama_call(chunk, target_lang))
+        return ''.join(translated)
+
+    def _ollama_call(self, content: str, target_lang: str) -> str:
+        import requests
+        import re as _re
+        
+        model = self.api_key if self.api_key else 'llama3'
+        
+        has_html = '<' in content
+        
+        system_prompt = (
+            f"You are a professional translator.\n"
+            f"Translate the following text from {self.source_lang} to {target_lang}.\n"
+            f"CRITICAL INSTRUCTIONS:\n"
+            f"- Return ONLY the raw translated text.\n"
+            f"- DO NOT add any markdown blocks like ```html.\n"
+            f"- DO NOT add any introductions or explanations.\n"
+        )
+        if has_html:
+            system_prompt += (
+                "- Preserve ALL HTML tags exactly as they are.\n"
+                "- DO NOT translate HTML attributes (like style, class, dir, href).\n"
+                "- ONLY translate the human-readable text BETWEEN the HTML tags.\n"
+                "- Example: <p style=\"color: red;\">Hello</p> -> <p style=\"color: red;\">Cześć</p>\n"
+            )
+        else:
+            system_prompt += "- The input is plain text. DO NOT output any HTML tags.\n"
+                  
+        try:
+            response = requests.post(
+                'http://host.docker.internal:11434/api/chat',
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": content}
+                    ],
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 8192
+                    }
+                },
+                timeout=300
+            )
+            response.raise_for_status()
+            text = response.json().get('message', {}).get('content', '').strip()
+            
+            text = _re.sub(r'^```[a-zA-Z]*\s*', '', text)
+            text = _re.sub(r'\s*```$', '', text)
+            
+            text = _re.sub(r'^(Here is|This is|Translation|Translated|Sure).*?:\s*\n*', '', text, flags=_re.IGNORECASE)
+            
+            text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+            
+            text = text.replace(']]>', ']]&gt;')
+            
+            if not has_html:
+                text = _re.sub(r'<[^>]+>', '', text)
+            
+            return text.strip()
+        except Exception as e:
+            print(f'  [!] Ollama error: {e}')
+            return content
+
     def wrap_mlang(self, translations: dict) -> str:
         return ''.join(
             f'{{mlang {lang}}}{txt}{{mlang}}'
@@ -213,7 +298,7 @@ class MoodleMBZProcessor:
           C) Plain text           (wrap fresh text with mlang blocks)
         """
         change_count = [0]
-        outer_re = rf'(<{tag}(?:[^>]*)>)(.*?)(</{tag}>)'
+        outer_re = rf'(<{tag}(?:\s[^>]*)?>)(.*?)(</{tag}>)'
 
         def handle(m):
             open_tag  = m.group(1)
@@ -315,11 +400,20 @@ class MoodleMBZProcessor:
             return f'{open_tag}{inner}{close_tag}'
 
         print(f'      [mlang] from {{{self.source_lang}}} ({len(src_content)} chars)')
-        translations = {
-            lang: (src_content if lang == self.source_lang
-                   else self.translate_text(src_content, lang))
-            for lang in self.target_langs
-        }
+        
+        is_escaped = '<' not in src_content and ('&lt;' in src_content or '&gt;' in src_content)
+        src_content_to_translate = _html.unescape(src_content) if is_escaped else src_content
+
+        translations = {}
+        for lang in self.target_langs:
+            if lang == self.source_lang:
+                translations[lang] = src_content
+            else:
+                translated = self.translate_text(src_content_to_translate, lang)
+                if is_escaped:
+                    translated = _html.escape(translated)
+                translations[lang] = translated
+
         new_inner = self.wrap_mlang(translations)
         if tag == 'name' and len(new_inner) > 255:
             return f'{open_tag}{inner}{close_tag}'
@@ -327,6 +421,11 @@ class MoodleMBZProcessor:
         if new_inner == inner.strip():
             return f'{open_tag}{inner}{close_tag}'
         cc[0] += 1
+
+        if not is_escaped:
+            new_inner_safe = new_inner.replace(']]>', ']]]]><![CDATA[>')
+            return f'{open_tag}<![CDATA[{new_inner_safe}]]>{close_tag}'
+            
         return f'{open_tag}{new_inner}{close_tag}'
 
     # ── Strategy C ── plain text ──────────────────────────────────────────────
@@ -361,6 +460,10 @@ class MoodleMBZProcessor:
         Translate XML content given as bytes.
         Returns new bytes (may be same object if no changes made).
         """
+
+        if hasattr(self, 'test_limit') and self.test_limit and getattr(self, 'translated_files_count', 0) >= self.test_limit:
+            return content_bytes
+
         try:
             content = content_bytes.decode('utf-8', errors='replace')
         except Exception:
@@ -374,7 +477,18 @@ class MoodleMBZProcessor:
                 total_changes += n
 
         if total_changes:
-            print(f'  [✓] {name} ({total_changes} change(s))')
+            try:
+                import xml.etree.ElementTree as ET
+                ET.fromstring(content.encode('utf-8'))
+            except ET.ParseError as e:
+                print(f'  [!!!] FATAL XML ERROR in {name}: {e}')
+                with open('last_broken_xml.txt', 'w', encoding='utf-8') as f:
+                    f.write(content)
+                return content_bytes
+
+            if hasattr(self, 'translated_files_count'):
+                self.translated_files_count += 1
+            print(f'  [✓] {name} ({total_changes} change(s)) [File {getattr(self, "translated_files_count", 0)}/{getattr(self, "test_limit", "∞")}]')
             return content.encode('utf-8')
         return content_bytes
 
