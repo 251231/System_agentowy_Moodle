@@ -112,8 +112,11 @@ async def create_task(
     }
 
     # For edge cases where API KEY is not in os.environ yet but maybe another key type
-    if not config["api_key"] and api_type == "gemini":
-         config["api_key"] = os.environ.get("GEMINI_API_KEY", "")
+    if not config["api_key"]:
+        if api_type == "gemini":
+             config["api_key"] = os.environ.get("GEMINI_API_KEY", "")
+        elif api_type == "openrouter":
+             config["api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
 
     task = Task(original_filename=file.filename, config=config)
     db.add(task)

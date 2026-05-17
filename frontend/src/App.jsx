@@ -298,6 +298,7 @@ const App = () => {
                   <option value="openai">OpenAI GPT-4o</option>
                   <option value="deepl">DeepL</option>
                   <option value="gemini">Gemini AI Studio</option>
+                  <option value="openrouter">OpenRouter (Auto Free Tier)</option>
                 </select>
               </div>
 
