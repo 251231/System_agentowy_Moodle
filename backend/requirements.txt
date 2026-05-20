@@ -12,3 +12,7 @@ python-dotenv
 alembic
 google-genai
 tenacity
+python-jose[cryptography]
+passlib
+bcrypt==3.2.2
+pydantic[email]

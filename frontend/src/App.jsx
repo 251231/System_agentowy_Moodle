@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import api from './api';
+import Auth from './Auth';
 import './App.css';
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -85,18 +86,59 @@ const App = () => {
     api_type: 'none',
     api_key: '',
   });
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+  const [user, setUser] = useState(null);
+  const [showDropdown, setShowDropdown] = useState(false);
   const fileInputRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setIsAuthenticated(false);
+    setUser(null);
+  };
+
+  const fetchUser = async () => {
+    try {
+      const res = await api.get('/users/me');
+      setUser(res.data);
+    } catch (err) {
+      console.error("Failed to fetch user profile", err);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchUser();
+    } else {
+      setUser(null);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   // ── polling ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
     fetchTasks();
     const id = setInterval(fetchTasks, 3000);
     return () => clearInterval(id);
-  }, []);
+  }, [isAuthenticated]);
 
   const fetchTasks = async () => {
     try {
-      const res = await axios.get(`${API}/tasks`);
+      const res = await api.get('/tasks');
       setTasks(res.data);
     } catch (_) { }
   };
@@ -139,7 +181,7 @@ const App = () => {
     fd.append('api_type', config.api_type);
     if (config.api_key) fd.append('api_key', config.api_key);
     try {
-      await axios.post(`${API}/tasks`, fd);
+      await api.post('/tasks', fd);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       fetchTasks();
@@ -153,9 +195,30 @@ const App = () => {
   const handleCancel = async (id, e) => {
     e.stopPropagation();
     try {
-      await axios.post(`${API}/tasks/${id}/cancel`);
+      await api.post(`/tasks/${id}/cancel`);
       fetchTasks();
     } catch (_) { }
+  };
+
+  const handleDownload = async (task, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const response = await api.get(`/download/${task.id}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `processed_${task.original_filename}`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download error:', err);
+      alert('Nie udało się pobrać pliku.');
+    }
   };
 
   // ── helpers ─────────────────────────────────────────────────────────────
@@ -178,6 +241,10 @@ const App = () => {
 
   const canRun = !!file && config.target_langs.length > 0 && !isSubmitting;
 
+  if (!isAuthenticated) {
+    return <Auth onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   return (
     <div className="layout">
@@ -186,6 +253,31 @@ const App = () => {
         <div className="topbar-logo">
           <div className="logo-mark">M</div>
           <span className="logo-text">Moodle AI</span>
+        </div>
+
+        <div className="user-menu-container" ref={dropdownRef}>
+          <div className="user-menu-trigger" onClick={() => setShowDropdown(!showDropdown)}>
+            <div className="user-avatar">
+              {user && user.email ? user.email[0].toUpperCase() : 'U'}
+            </div>
+            <span className="user-name">
+              {user ? user.email : 'Wczytywanie...'}
+            </span>
+            <IconDown />
+          </div>
+
+          {showDropdown && (
+            <div className="user-dropdown-menu">
+              <button className="user-dropdown-item" onClick={handleLogout}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '6px' }}>
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Wyloguj się
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -425,15 +517,12 @@ const App = () => {
                         <span className="badge-cancelled">Anulowano</span>
                       )}
                       {task.status === 'completed' && (
-                        <a
+                        <button
                           className="btn-dl"
-                          href={`${API}/download/${task.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={e => e.stopPropagation()}
+                          onClick={e => handleDownload(task, e)}
                         >
                           <IconDl /> Pobierz
-                        </a>
+                        </button>
                       )}
                       {task.subtasks?.length > 0 && (
                         <span className="expand-arrow"><IconDown /></span>
