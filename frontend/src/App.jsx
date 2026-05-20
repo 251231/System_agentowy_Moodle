@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api';
 import Auth from './Auth';
+import ResetPassword from './ResetPassword';
 import './App.css';
 
 const API = import.meta.env.VITE_API_URL ?? '';
@@ -74,6 +75,9 @@ const LANGUAGES = [
 const TARGET_LANG_TAGS = ['PL', 'EN', 'DE', 'FR'];
 
 const App = () => {
+  const [resetToken, setResetToken] = useState(() => {
+    return new URLSearchParams(window.location.search).get('token');
+  });
   const [file, setFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [tasks, setTasks] = useState([]);
@@ -240,6 +244,13 @@ const App = () => {
       : '';
 
   const canRun = !!file && config.target_langs.length > 0 && !isSubmitting;
+
+  if (resetToken) {
+    return <ResetPassword token={resetToken} onResetSuccess={() => {
+      setResetToken(null);
+      window.history.replaceState({}, document.title, "/");
+    }} />;
+  }
 
   if (!isAuthenticated) {
     return <Auth onLoginSuccess={() => setIsAuthenticated(true)} />;

@@ -9,12 +9,20 @@ from app.db.database import get_db
 from app.db.models import User
 from app.core import security
 from app.api import deps
+from app.core.mail import send_reset_password_email
 
 router = APIRouter()
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
+
+class PasswordRecovery(BaseModel):
+    email: EmailStr
+
+class ResetPassword(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
 
 class UserResponse(BaseModel):
     id: str
@@ -83,3 +91,35 @@ def read_users_me(
     Get current user.
     """
     return current_user
+
+@router.post("/password-recovery")
+async def recover_password(body: PasswordRecovery, db: Session = Depends(get_db)):
+    """
+    Password Recovery.
+    """
+    user = db.query(User).filter(User.email == body.email.lower()).first()
+    
+    if user:
+        token = security.generate_password_reset_token(email=user.email)
+        await send_reset_password_email(email_to=user.email, token=token)
+
+    return {"msg": "E-mail z linkiem resetującym hasło został wysłany."}
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPassword, db: Session = Depends(get_db)):
+    """
+    Reset password.
+    """
+    email = security.verify_password_reset_token(body.token)
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid or expired token.")
+        
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+        
+    user.hashed_password = security.get_password_hash(body.new_password)
+    db.commit()
+    
+    return {"msg": "Password updated successfully."}
