@@ -538,9 +538,14 @@ const App = () => {
                         </button>
                       )}
                       {isActive && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 600 }}>
-                          Przetwarzanie...
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', fontWeight: 600 }}>
+                            Przetwarzanie... {task.progress || 0}%
+                          </span>
+                          <div style={{ width: '60px', height: '4px', background: 'var(--border-hi)', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div style={{ width: `${task.progress || 0}%`, height: '100%', background: 'var(--primary)', transition: 'width 0.3s ease' }}></div>
+                          </div>
+                        </div>
                       )}
                       {task.status === 'failed' && (
                         <span className="badge-error"><IconX /> Błąd</span>
