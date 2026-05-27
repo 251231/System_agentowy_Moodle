@@ -37,7 +37,7 @@ SKIP_FILES = {
     'outcomes.xml', 'roles.xml', 'filters.xml', 'comments.xml', 'badges.xml',
     'calendarevents.xml', 'competencies.xml', 'contentbank.xml', 'enrolments.xml',
     'scales.xml', 'tags.xml', 'inforef.xml', 'grade_history.xml',
-    'course_completion.xml', 'module.xml',
+    'course_completion.xml', 'module.xml', 'users.xml', 'files.xml',
 }
 
 CONTENT_TAGS = ['name', 'intro', 'summary', 'content', 'description', 'text']
@@ -54,6 +54,27 @@ class MoodleMBZProcessor:
         self.cancel_callback = cancel_callback
 
     # ─────────────────────────────────────────────────────────────── translation
+
+    def _mask_html_tags(self, text: str) -> tuple[str, list[str]]:
+        tags = []
+        def replace_tag(match):
+            tags.append(match.group(0))
+            return f"[[T{len(tags)-1}]]"
+        
+        # 1. Mask valid HTML/XML-like tags safely (safely ignoring > inside quotes)
+        # 2. Mask Moodle placeholders like @@PLUGINFILE@@, @@CONTEXTID@@, etc.
+        pattern = r"</?[a-zA-Z!?[][^'\">]*(?:'(?:[^']|\\')*'[^'\">]*|\"(?:[^\"]|\\\")*\"[^'\">]*)*>|@@[A-Z0-9_]+@@"
+        masked_text = re.sub(pattern, replace_tag, text)
+        return masked_text, tags
+
+    def _unmask_html_tags(self, masked_text: str, tags: list[str]) -> str:
+        def restore_tag(match):
+            idx = int(match.group(1))
+            if 0 <= idx < len(tags):
+                return tags[idx]
+            return match.group(0)
+        
+        return re.sub(r"\[\[T(\d+)\]\]", restore_tag, masked_text)
 
     def translate_text(self, html_or_text: str, target_lang: str) -> str:
         if target_lang == self.source_lang or not html_or_text.strip():
@@ -83,11 +104,23 @@ class MoodleMBZProcessor:
         if hasattr(self, '_translation_cache') and cache_key in self._translation_cache:
             return self._translation_cache[cache_key]
 
-        if self.api_type == 'openai' and self.api_key: return self._openai_call(content, target_lang)
-        if self.api_type == 'deepl' and self.api_key: return self._deepl_translate(content, target_lang)
-        if self.api_type == 'gemini' and self.api_key: return self._gemini_call(content, target_lang)
-        if self.api_type == 'openrouter' and self.api_key: return self._openrouter_call(content, target_lang)
-        return f'[{target_lang}] {content}'
+        if self.api_type == 'deepl' and self.api_key:
+            return self._deepl_translate(content, target_lang)
+
+        # Mask HTML tags for LLMs
+        masked, tags = self._mask_html_tags(content)
+
+        if self.api_type == 'openai' and self.api_key:
+            res = self._openai_call(masked, target_lang)
+        elif self.api_type == 'gemini' and self.api_key:
+            res = self._gemini_call(masked, target_lang)
+        elif self.api_type == 'openrouter' and self.api_key:
+            res = self._openrouter_call(masked, target_lang)
+        else:
+            res = f'[{target_lang}] {masked}'
+
+        unmasked = self._unmask_html_tags(res, tags)
+        return unmasked
 
     def _batch_translate(self, extract_set: set):
         by_lang = {}
@@ -110,29 +143,51 @@ class MoodleMBZProcessor:
             if batch: self._translate_batch_to_cache(batch, lang)
 
     def _translate_batch_to_cache(self, texts: list[str], target_lang: str):
-        if self.api_type == 'openrouter' and self.api_key: results = self._openrouter_batch_call(texts, target_lang)
-        elif self.api_type == 'openai' and self.api_key: results = self._openai_batch_call(texts, target_lang)
-        elif self.api_type == 'gemini' and self.api_key: results = self._gemini_batch_call(texts, target_lang)
-        else: results = []
+        # Mask texts
+        masked_texts = []
+        texts_tags = []
+        for t in texts:
+            m, tags = self._mask_html_tags(t)
+            masked_texts.append(m)
+            texts_tags.append(tags)
+
+        if self.api_type == 'openrouter' and self.api_key:
+            results = self._openrouter_batch_call(masked_texts, target_lang)
+        elif self.api_type == 'openai' and self.api_key:
+            results = self._openai_batch_call(masked_texts, target_lang)
+        elif self.api_type == 'gemini' and self.api_key:
+            results = self._gemini_batch_call(masked_texts, target_lang)
+        else:
+            results = []
             
         if len(results) != len(texts):
-            for t in texts:
-                if self.api_type == 'openrouter': res = self._openrouter_call(t, target_lang)
-                elif self.api_type == 'openai': res = self._openai_call(t, target_lang)
-                elif self.api_type == 'gemini': res = self._gemini_call(t, target_lang)
-                elif self.api_type == 'deepl': res = self._deepl_translate(t, target_lang)
-                else: res = f'[{target_lang}] {t}'
-                self._translation_cache[(t, target_lang)] = res
+            # Fallback to single calls
+            for t, tags in zip(texts, texts_tags):
+                m = self._mask_html_tags(t)[0]
+                if self.api_type == 'openrouter':
+                    res = self._openrouter_call(m, target_lang)
+                elif self.api_type == 'openai':
+                    res = self._openai_call(m, target_lang)
+                elif self.api_type == 'gemini':
+                    res = self._gemini_call(m, target_lang)
+                elif self.api_type == 'deepl':
+                    res = self._deepl_translate(t, target_lang)
+                else:
+                    res = f'[{target_lang}] {m}'
+                
+                unmasked = self._unmask_html_tags(res, tags)
+                self._translation_cache[(t, target_lang)] = unmasked
         else:
-            for text, result in zip(texts, results):
-                self._translation_cache[(text, target_lang)] = result
+            for text, result, tags in zip(texts, results, texts_tags):
+                unmasked = self._unmask_html_tags(result, tags)
+                self._translation_cache[(text, target_lang)] = unmasked
 
     def _openai_batch_call(self, texts: list[str], target_lang: str) -> list[str]:
         import json
         try: from openai import OpenAI
         except ImportError: return []
         client = OpenAI(api_key=self.api_key)
-        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
+        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are in the translation and in the same positions. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
         try:
             resp = client.chat.completions.create(
                 model='gpt-4o',
@@ -150,11 +205,10 @@ class MoodleMBZProcessor:
 
     def _gemini_batch_call(self, texts: list[str], target_lang: str) -> list[str]:
         import json
-        import time
         try: from google import genai
         except ImportError: return []
         client = genai.Client(api_key=self.api_key)
-        prompt = (f"You are a professional translator. Translate the following JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in exact order. Do not wrap in markdown.\n\n{json.dumps(texts, ensure_ascii=False)}")
+        prompt = (f"You are a professional translator. Translate the following JSON array of strings from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are and in the same positions. Return ONLY a valid JSON array of strings in exact order. Do not wrap in markdown.\n\n{json.dumps(texts, ensure_ascii=False)}")
         try:
             resp = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             res = resp.text.strip()
@@ -171,7 +225,7 @@ class MoodleMBZProcessor:
         try: from openai import OpenAI
         except ImportError: return []
         client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
-        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
+        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are in the translation and in the same positions. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
         user_content = json.dumps(texts, ensure_ascii=False)
         free_models = [
             "openai/gpt-oss-120b:free",
@@ -216,7 +270,7 @@ class MoodleMBZProcessor:
             resp = client.chat.completions.create(
                 model='gpt-4o',
                 messages=[
-                    {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content.'},
+                    {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are and in the same positions. Return ONLY translated content.'},
                     {'role': 'user', 'content': content},
                 ],
             )
@@ -240,7 +294,7 @@ class MoodleMBZProcessor:
         try: from google import genai
         except ImportError: return content
         client = genai.Client(api_key=self.api_key)
-        prompt = f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content:\n\n{content}'
+        prompt = f'Translate from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are and in the same positions. Return ONLY translated content:\n\n{content}'
         for attempt in range(3):
             try:
                 resp = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
@@ -274,7 +328,7 @@ class MoodleMBZProcessor:
                     resp = client.chat.completions.create(
                         model=model,
                         messages=[
-                            {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content.'},
+                            {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. You will see placeholders like [[T0]], [[T1]], etc. Keep them EXACTLY as they are and in the same positions. Return ONLY translated content.'},
                             {'role': 'user', 'content': content},
                         ],
                         extra_headers={"HTTP-Referer": "https://moodle.agent.local", "X-Title": "Moodle Translator Agent"}
@@ -316,6 +370,26 @@ class MoodleMBZProcessor:
             return False
         return True
 
+    def _is_inside_config_block(self, file_content: str, start_idx: int) -> bool:
+        # Search backwards from start_idx up to 1000 characters
+        search_start = max(0, start_idx - 1000)
+        prefix = file_content[search_start:start_idx]
+        
+        # Check if the last opened tag among blacklisted config parents is not closed
+        for tag in [
+            'plugin_config', 'courseformatoption', 'question_category', 
+            'setting', 'detail'
+        ]:
+            opens = list(re.finditer(rf'<{tag}(?:\s+[^>]*)?>', prefix))
+            closes = list(re.finditer(rf'</{tag}>', prefix))
+            
+            if opens:
+                last_open = opens[-1].start()
+                last_close = closes[-1].start() if closes else -1
+                if last_open > last_close:
+                    return True
+        return False
+
     def _replace_in_tag(self, file_content: str, tag: str):
         """
         Find every <tag>…</tag> in file_content and translate it.
@@ -327,7 +401,7 @@ class MoodleMBZProcessor:
           C) Plain text           (wrap fresh text with mlang blocks)
         """
         change_count = [0]
-        outer_re = rf'(<{tag}(?:[^>]*)>)(.*?)(</{tag}>)'
+        outer_re = rf'(<{tag}(?:\s+[^>]*)?>)(.*?)(</{tag}>)'
 
         def handle(m):
             open_tag  = m.group(1)
@@ -336,6 +410,9 @@ class MoodleMBZProcessor:
 
             # --- Safety checks to prevent DMLWriteException ---
             if '$@NULL@$' in inner or not inner.strip():
+                return m.group(0)
+
+            if self._is_inside_config_block(file_content, m.start()):
                 return m.group(0)
             
             stripped_test = inner.strip()
@@ -396,7 +473,7 @@ class MoodleMBZProcessor:
                         for lang in self.target_langs
                     }
                     new_inner = self.wrap_mlang(translations)
-                    if tag == 'name' and len(new_inner) > 255:
+                    if tag == 'name' and len(new_inner) > 180:
                         return f'{open_tag}{original_inner}{close_tag}'
                     if new_inner != stripped:
                         cc[0] += 1
@@ -413,7 +490,7 @@ class MoodleMBZProcessor:
             for lang in self.target_langs
         }
         new_inner = self.wrap_mlang(translations)
-        if tag == 'name' and len(new_inner) > 255:
+        if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{original_inner}{close_tag}'
             
         cc[0] += 1
@@ -441,7 +518,7 @@ class MoodleMBZProcessor:
                 translations[lang] = _html.escape(translated)
                 
         new_inner = self.wrap_mlang(translations)
-        if tag == 'name' and len(new_inner) > 255:
+        if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{inner}{close_tag}'
             
         if new_inner == inner.strip():
@@ -463,7 +540,7 @@ class MoodleMBZProcessor:
             translations[lang] = translated
 
         new_inner = self.wrap_mlang(translations)
-        if tag == 'name' and len(new_inner) > 255:
+        if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{original_inner}{close_tag}'
             
         cc[0] += 1
@@ -477,6 +554,39 @@ class MoodleMBZProcessor:
         basename = member_name.rstrip('/').split('/')[-1].lstrip('.')
         return member_name.endswith('.xml') and basename not in SKIP_FILES
 
+    def _scan_and_extract_all(self, input_mbz: str) -> set:
+        """Scan through the archive and extract all translatable texts from XML files."""
+        extracted_texts = set()
+        self._extract_mode_set = extracted_texts
+
+        if input_mbz.lower().endswith('.zip'):
+            with zipfile.ZipFile(input_mbz, 'r') as zip_in:
+                for info in zip_in.infolist():
+                    if self._should_process(info.filename):
+                        try:
+                            data = zip_in.read(info.filename)
+                            content = data.decode('utf-8', errors='replace')
+                            for tag in CONTENT_TAGS:
+                                self._replace_in_tag(content, tag)
+                        except Exception:
+                            pass
+        else:
+            with tarfile.open(input_mbz, 'r:gz') as tar_in:
+                for member in tar_in:
+                    if member.isfile() and self._should_process(member.name):
+                        try:
+                            fh = tar_in.extractfile(member)
+                            if fh:
+                                data = fh.read()
+                                content = data.decode('utf-8', errors='replace')
+                                for tag in CONTENT_TAGS:
+                                    self._replace_in_tag(content, tag)
+                        except Exception:
+                            pass
+
+        self._extract_mode_set = None
+        return extracted_texts
+
     def process_xml_bytes(self, content_bytes: bytes, name: str) -> bytes:
         """
         Translate XML content given as bytes.
@@ -487,22 +597,7 @@ class MoodleMBZProcessor:
         except Exception:
             return content_bytes
 
-        # 1. Extraction Phase (Batching)
-        self._extract_mode_set = set()
-        for tag in CONTENT_TAGS:
-            self._replace_in_tag(content, tag)
-            
-        extract_set = self._extract_mode_set
-        self._extract_mode_set = None
-
-        # 2. Translate Extracted Texts
-        if not hasattr(self, '_translation_cache'):
-            self._translation_cache = {}
-            
-        if extract_set:
-            self._batch_translate(extract_set)
-
-        # 3. Replacement Phase
+        # Cache is pre-populated globally, so we go straight to the replacement phase
         total_changes = 0
         for tag in CONTENT_TAGS:
             content, n = self._replace_in_tag(content, tag)
@@ -515,7 +610,7 @@ class MoodleMBZProcessor:
             return content.encode('utf-8')
         return content_bytes
 
-    def process_mbz(self, input_mbz: str, output_mbz: str):
+    def process_mbz(self, input_mbz: str, output_mbz: str, task_id: str = None):
         """
         Stream through the archive, modifying XML byte content in-place.
 
@@ -529,6 +624,44 @@ class MoodleMBZProcessor:
         Streaming uses the ORIGINAL TarInfo objects for every unchanged member
         and only replaces .size for members whose byte content changed.
         """
+        # 1. Global Extraction Phase
+        print("[*] Phase 1: Scanning and extracting all translatable texts...")
+        global_extract_set = self._scan_and_extract_all(input_mbz)
+        
+        # 2. Bulk Translation Phase
+        if not hasattr(self, '_translation_cache'):
+            self._translation_cache = {}
+        if global_extract_set:
+            print(f"[*] Found {len(global_extract_set)} unique text-language combinations to translate.")
+            self._batch_translate(global_extract_set)
+        
+        # Save exported texts JSON if task_id is provided
+        if task_id:
+            export_data = []
+            unique_originals = sorted(list(set(text for text, lang in global_extract_set)))
+            for text in unique_originals:
+                translations = {}
+                for lang in self.target_langs:
+                    if lang == self.source_lang:
+                        translations[lang] = text
+                    else:
+                        translations[lang] = self._translation_cache.get((text, lang), f"[{lang}] {text}")
+                export_data.append({
+                    "original": text,
+                    "translations": translations
+                })
+            
+            temp_dir = Path("temp")
+            temp_dir.mkdir(exist_ok=True)
+            export_path = temp_dir / f"texts_{task_id}.json"
+            try:
+                with open(export_path, "w", encoding="utf-8") as f:
+                    json.dump(export_data, f, ensure_ascii=False, indent=2)
+                print(f"[✓] Saved extracted texts to {export_path}")
+            except Exception as e:
+                print(f"[!] Failed to save texts JSON: {e}")
+
+        # 3. Streaming / Replacement Phase
         if input_mbz.lower().endswith('.zip'):
             self._process_zip(input_mbz, output_mbz)
         else:

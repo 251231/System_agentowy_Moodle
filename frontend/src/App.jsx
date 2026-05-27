@@ -226,6 +226,27 @@ const App = () => {
     }
   };
 
+  const handleDownloadTexts = async (task, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const response = await api.get(`/tasks/${task.id}/texts`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `texts_${task.original_filename.replace('.mbz', '')}.json`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download texts error:', err);
+      alert('Nie udało się pobrać pliku tekstów JSON.');
+    }
+  };
+
   // ── helpers ─────────────────────────────────────────────────────────────
   const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
 
@@ -529,12 +550,22 @@ const App = () => {
                         <span className="badge-cancelled">Anulowano</span>
                       )}
                       {task.status === 'completed' && (
-                        <button
-                          className="btn-dl"
-                          onClick={e => handleDownload(task, e)}
-                        >
-                          <IconDl /> Pobierz
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            className="btn-dl"
+                            onClick={e => handleDownloadTexts(task, e)}
+                            style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
+                            title="Pobierz wyekstrahowane i przetłumaczone teksty w formacie JSON"
+                          >
+                            <IconDl /> Teksty (JSON)
+                          </button>
+                          <button
+                            className="btn-dl"
+                            onClick={e => handleDownload(task, e)}
+                          >
+                            <IconDl /> Pobierz MBZ
+                          </button>
+                        </div>
                       )}
                       {task.subtasks?.length > 0 && (
                         <span className="expand-arrow"><IconDown /></span>
