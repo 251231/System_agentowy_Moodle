@@ -12,13 +12,13 @@ Base.metadata.create_all(bind=engine)
 
 # Dynamiczne dodawanie kolumn dla istniejącej bazy
 inspector = inspect(engine)
-if "users" in inspector.get_table_names():
-    columns = [col['name'] for col in inspector.get_columns('users')]
+
+
+if "tasks" in inspector.get_table_names():
+    columns = [col['name'] for col in inspector.get_columns('tasks')]
     with engine.begin() as conn:
-        if 'first_name' not in columns:
-            conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR"))
-        if 'last_name' not in columns:
-            conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR"))
+        if 'owner_id' not in columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN owner_id VARCHAR REFERENCES users(id)"))
 
 app = FastAPI(title="Moodle Agent System")
 
