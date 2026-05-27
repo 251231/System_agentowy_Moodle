@@ -1,11 +1,25 @@
 import uuid
 import datetime
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
 def _uuid():
     return str(uuid.uuid4())
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    tasks = relationship("Task", back_populates="owner", cascade="all, delete-orphan")
+
 
 class Task(Base):
     __tablename__ = "tasks"
@@ -16,7 +30,9 @@ class Task(Base):
     result_filename = Column(String, nullable=True)
     config          = Column(JSON, default={})
     created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    owner_id        = Column(String, ForeignKey("users.id"))
 
+    owner = relationship("User", back_populates="tasks")
     subtasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan")
 
 

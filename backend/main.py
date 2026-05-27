@@ -1,11 +1,24 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import inspect, text
+
 from app.db.database import engine, Base
 from app.api.endpoints import router as api_router
+from app.api.auth import router as auth_router
 
 # Inicjalizacja tabel w bazie
 Base.metadata.create_all(bind=engine)
+
+# Dynamiczne dodawanie kolumn dla istniejącej bazy
+inspector = inspect(engine)
+if "users" in inspector.get_table_names():
+    columns = [col['name'] for col in inspector.get_columns('users')]
+    with engine.begin() as conn:
+        if 'first_name' not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR"))
+        if 'last_name' not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR"))
 
 app = FastAPI(title="Moodle Agent System")
 
@@ -16,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, tags=["auth"])
 app.include_router(api_router)
 
 if __name__ == "__main__":
