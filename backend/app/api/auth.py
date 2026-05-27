@@ -27,8 +27,6 @@ class ResetPassword(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: str
-    first_name: str | None = None
-    last_name: str | None = None
     is_active: bool
 
     class Config:
