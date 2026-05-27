@@ -46,12 +46,13 @@ CHUNK_CHARS  = 8000   # max chars per single OpenAI call
 
 class MoodleMBZProcessor:
     def __init__(self, source_lang='en', target_langs=None,
-                 api_type='none', api_key=None, cancel_callback=None):
+                 api_type='none', api_key=None, cancel_callback=None, progress_callback=None):
         self.source_lang  = source_lang
         self.target_langs = target_langs or ['en', 'pl']
         self.api_type     = api_type
         self.api_key      = api_key
         self.cancel_callback = cancel_callback
+        self.progress_callback = progress_callback
 
     # ─────────────────────────────────────────────────────────────── translation
 
@@ -128,19 +129,51 @@ class MoodleMBZProcessor:
             if lang not in by_lang: by_lang[lang] = []
             if (text, lang) not in self._translation_cache: by_lang[lang].append(text)
                 
+        # Estimate total batches
+        total_batches = 0
+        for texts in by_lang.values():
+            batch_count = 0
+            chars = 0
+            for text in texts:
+                if len(text) > 4000:
+                    total_batches += 1
+                else:
+                    batch_count += 1
+                    chars += len(text)
+                    if batch_count >= 20 or chars > 4000:
+                        total_batches += 1
+                        batch_count = 0
+                        chars = 0
+            if batch_count:
+                total_batches += 1
+
+        processed_batches = 0
         for lang, texts in by_lang.items():
             if not texts: continue
             batch, batch_chars = [], 0
             for text in texts:
                 if len(text) > 4000:
                     self._translate_batch_to_cache([text], lang)
+                    processed_batches += 1
+                    if self.progress_callback and total_batches > 0:
+                        p = 10 + int(80 * processed_batches / total_batches)
+                        self.progress_callback(p, f"Tłumaczenie ({processed_batches}/{total_batches} partii)...")
                     continue
                 batch.append(text)
                 batch_chars += len(text)
                 if len(batch) >= 20 or batch_chars > 4000:
                     self._translate_batch_to_cache(batch, lang)
+                    processed_batches += 1
+                    if self.progress_callback and total_batches > 0:
+                        p = 10 + int(80 * processed_batches / total_batches)
+                        self.progress_callback(p, f"Tłumaczenie ({processed_batches}/{total_batches} partii)...")
                     batch, batch_chars = [], 0
-            if batch: self._translate_batch_to_cache(batch, lang)
+            if batch:
+                self._translate_batch_to_cache(batch, lang)
+                processed_batches += 1
+                if self.progress_callback and total_batches > 0:
+                    p = 10 + int(80 * processed_batches / total_batches)
+                    self.progress_callback(p, f"Tłumaczenie ({processed_batches}/{total_batches} partii)...")
 
     def _translate_batch_to_cache(self, texts: list[str], target_lang: str):
         # Mask texts
@@ -624,16 +657,25 @@ class MoodleMBZProcessor:
         Streaming uses the ORIGINAL TarInfo objects for every unchanged member
         and only replaces .size for members whose byte content changed.
         """
+        if self.progress_callback:
+            self.progress_callback(5, "Rozpoczynam skanowanie plików kursu...")
+
         # 1. Global Extraction Phase
         print("[*] Phase 1: Scanning and extracting all translatable texts...")
         global_extract_set = self._scan_and_extract_all(input_mbz)
         
+        if self.progress_callback:
+            self.progress_callback(10, f"Znaleziono {len(global_extract_set)} elementów. Rozpoczynam tłumaczenie...")
+
         # 2. Bulk Translation Phase
         if not hasattr(self, '_translation_cache'):
             self._translation_cache = {}
         if global_extract_set:
             print(f"[*] Found {len(global_extract_set)} unique text-language combinations to translate.")
             self._batch_translate(global_extract_set)
+        
+        if self.progress_callback:
+            self.progress_callback(90, "Zapisywanie przetłumaczonego kursu (pakowanie)...")
         
         # Save exported texts JSON if task_id is provided
         if task_id:
@@ -666,6 +708,9 @@ class MoodleMBZProcessor:
             self._process_zip(input_mbz, output_mbz)
         else:
             self._process_tar(input_mbz, output_mbz)
+            
+        if self.progress_callback:
+            self.progress_callback(100, "Zakończono przetwarzanie.")
 
     def _process_tar(self, input_mbz: str, output_mbz: str):
         processed = 0

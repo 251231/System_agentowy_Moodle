@@ -19,6 +19,8 @@ if "tasks" in inspector.get_table_names():
     with engine.begin() as conn:
         if 'owner_id' not in columns:
             conn.execute(text("ALTER TABLE tasks ADD COLUMN owner_id VARCHAR REFERENCES users(id)"))
+        if 'progress' not in columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0"))
 
 app = FastAPI(title="Moodle Agent System")
 

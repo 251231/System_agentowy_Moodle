@@ -25,6 +25,7 @@ class Task(Base):
     id              = Column(String, primary_key=True, default=_uuid)
     original_filename = Column(String)
     status          = Column(String, default="pending")   # pending | processing | completed | failed
+    progress        = Column(Integer, default=0)
     result_filename = Column(String, nullable=True)
     config          = Column(JSON, default={})
     created_at      = Column(DateTime, default=datetime.datetime.utcnow)

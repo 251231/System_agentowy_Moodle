@@ -54,12 +54,27 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
             if cancelled:
                 raise Exception("Przerwano przez uzytkownika.")
 
+        def update_progress(percent: int, msg: str):
+            db_p = SessionLocal()
+            try:
+                t = db_p.query(Task).filter_by(id=task_id).first()
+                if t and t.status == "processing":
+                    t.progress = percent
+                    # Optionally update the subtask log with the current message
+                    st = db_p.query(SubTask).filter_by(task_id=task_id, agent_name="Translation Processor").first()
+                    if st:
+                        st.log = msg
+                    db_p.commit()
+            finally:
+                db_p.close()
+
         processor = MoodleMBZProcessor(
             source_lang=config.get("source_lang", "en"),
             target_langs=config.get("target_langs", ["en", "pl"]),
             api_type=config.get("api_type", "none"),
             api_key=config.get("api_key", ""),
-            cancel_callback=check_cancel
+            cancel_callback=check_cancel,
+            progress_callback=update_progress
         )
         
         if config.get("translate"):
@@ -70,7 +85,10 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
 
         _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
 
+        _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
+
         task.status = "completed"
+        task.progress = 100
         task.result_filename = Path(output_path).name
         db.commit()
     except Exception as e:
@@ -147,6 +165,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
             "id":                t.id,
             "original_filename": t.original_filename,
             "status":            t.status,
+            "progress":          t.progress,
             "created_at":        t.created_at.isoformat() if t.created_at else None,
             "subtasks": [
                 {"agent": s.agent_name, "status": s.status, "log": s.log}
@@ -165,6 +184,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
         "id":                t.id,
         "original_filename": t.original_filename,
         "status":            t.status,
+        "progress":          t.progress,
         "subtasks": [
             {"agent": s.agent_name, "status": s.status, "log": s.log}
             for s in t.subtasks
