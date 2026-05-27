@@ -8,7 +8,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db, SessionLocal
-from app.db.models import Task, SubTask
+from app.db.models import Task, SubTask, User
+from app.api import deps
 from app.core.moodle_processor import MoodleMBZProcessor
 
 router = APIRouter()
@@ -102,6 +103,7 @@ async def create_task(
     api_type:      str  = Form("none"),
     api_key:       str  = Form(""),
     db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     config = {
         "translate":     translate,
@@ -112,10 +114,13 @@ async def create_task(
     }
 
     # For edge cases where API KEY is not in os.environ yet but maybe another key type
-    if not config["api_key"] and api_type == "gemini":
-         config["api_key"] = os.environ.get("GEMINI_API_KEY", "")
+    if not config["api_key"]:
+        if api_type == "gemini":
+             config["api_key"] = os.environ.get("GEMINI_API_KEY", "")
+        elif api_type == "openrouter":
+             config["api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
 
-    task = Task(original_filename=file.filename, config=config)
+    task = Task(original_filename=file.filename, config=config, owner_id=current_user.id)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -134,8 +139,8 @@ async def create_task(
 
 
 @router.get("/tasks")
-def list_tasks(db: Session = Depends(get_db)):
-    tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    tasks = db.query(Task).filter(Task.owner_id == current_user.id).order_by(Task.created_at.desc()).all()
     result = []
     for t in tasks:
         result.append({
@@ -152,8 +157,8 @@ def list_tasks(db: Session = Depends(get_db)):
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, db: Session = Depends(get_db)):
-    t = db.query(Task).filter_by(id=task_id).first()
+def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
     if not t:
         return {"status": "not_found"}
     return {
@@ -168,8 +173,8 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/tasks/{task_id}/cancel")
-def cancel_task(task_id: str, db: Session = Depends(get_db)):
-    t = db.query(Task).filter_by(id=task_id).first()
+def cancel_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
     if not t:
         return {"error": "not_found"}
     if t.status == "processing" or t.status == "pending":
@@ -181,8 +186,8 @@ def cancel_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/download/{task_id}")
-def download(task_id: str, db: Session = Depends(get_db)):
-    t = db.query(Task).filter_by(id=task_id).first()
+def download(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
     if not t or t.status != "completed" or not t.result_filename:
         return {"error": "File not ready or not found"}
     path = UPLOAD_DIR / t.result_filename

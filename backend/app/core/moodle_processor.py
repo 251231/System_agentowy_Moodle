@@ -58,29 +58,156 @@ class MoodleMBZProcessor:
     def translate_text(self, html_or_text: str, target_lang: str) -> str:
         if target_lang == self.source_lang or not html_or_text.strip():
             return html_or_text
-        if self.api_type == 'openai' and self.api_key:
-            return self._openai_translate(html_or_text, target_lang)
-        if self.api_type == 'deepl' and self.api_key:
-            return self._deepl_translate(html_or_text, target_lang)
-        if self.api_type == 'gemini' and self.api_key:
-            return self._gemini_translate(html_or_text, target_lang)
-        return f'[{target_lang}] {html_or_text}'
 
-    def _openai_translate(self, content: str, target_lang: str) -> str:
-        if len(content) <= CHUNK_CHARS:
-            return self._openai_call(content, target_lang)
-        # Split long HTML at paragraph boundaries
-        parts = re.split(r'(?<=</p>)', content)
-        translated, chunk = [], ''
-        for part in parts:
-            if len(chunk) + len(part) > CHUNK_CHARS and chunk:
-                translated.append(self._openai_call(chunk, target_lang))
-                chunk = part
-            else:
-                chunk += part
-        if chunk:
-            translated.append(self._openai_call(chunk, target_lang))
-        return ''.join(translated)
+        if len(html_or_text) > CHUNK_CHARS:
+            parts = re.split(r'(?<=</p>)', html_or_text)
+            translated, chunk = [], ''
+            for part in parts:
+                if len(chunk) + len(part) > CHUNK_CHARS and chunk:
+                    translated.append(self._translate_chunk(chunk, target_lang))
+                    chunk = part
+                else:
+                    chunk += part
+            if chunk:
+                translated.append(self._translate_chunk(chunk, target_lang))
+            return ''.join(translated)
+        else:
+            return self._translate_chunk(html_or_text, target_lang)
+
+    def _translate_chunk(self, content: str, target_lang: str) -> str:
+        if getattr(self, '_extract_mode_set', None) is not None:
+            self._extract_mode_set.add((content, target_lang))
+            return content
+            
+        cache_key = (content, target_lang)
+        if hasattr(self, '_translation_cache') and cache_key in self._translation_cache:
+            return self._translation_cache[cache_key]
+
+        if self.api_type == 'openai' and self.api_key: return self._openai_call(content, target_lang)
+        if self.api_type == 'deepl' and self.api_key: return self._deepl_translate(content, target_lang)
+        if self.api_type == 'gemini' and self.api_key: return self._gemini_call(content, target_lang)
+        if self.api_type == 'openrouter' and self.api_key: return self._openrouter_call(content, target_lang)
+        return f'[{target_lang}] {content}'
+
+    def _batch_translate(self, extract_set: set):
+        by_lang = {}
+        for text, lang in extract_set:
+            if lang not in by_lang: by_lang[lang] = []
+            if (text, lang) not in self._translation_cache: by_lang[lang].append(text)
+                
+        for lang, texts in by_lang.items():
+            if not texts: continue
+            batch, batch_chars = [], 0
+            for text in texts:
+                if len(text) > 4000:
+                    self._translate_batch_to_cache([text], lang)
+                    continue
+                batch.append(text)
+                batch_chars += len(text)
+                if len(batch) >= 20 or batch_chars > 4000:
+                    self._translate_batch_to_cache(batch, lang)
+                    batch, batch_chars = [], 0
+            if batch: self._translate_batch_to_cache(batch, lang)
+
+    def _translate_batch_to_cache(self, texts: list[str], target_lang: str):
+        if self.api_type == 'openrouter' and self.api_key: results = self._openrouter_batch_call(texts, target_lang)
+        elif self.api_type == 'openai' and self.api_key: results = self._openai_batch_call(texts, target_lang)
+        elif self.api_type == 'gemini' and self.api_key: results = self._gemini_batch_call(texts, target_lang)
+        else: results = []
+            
+        if len(results) != len(texts):
+            for t in texts:
+                if self.api_type == 'openrouter': res = self._openrouter_call(t, target_lang)
+                elif self.api_type == 'openai': res = self._openai_call(t, target_lang)
+                elif self.api_type == 'gemini': res = self._gemini_call(t, target_lang)
+                elif self.api_type == 'deepl': res = self._deepl_translate(t, target_lang)
+                else: res = f'[{target_lang}] {t}'
+                self._translation_cache[(t, target_lang)] = res
+        else:
+            for text, result in zip(texts, results):
+                self._translation_cache[(text, target_lang)] = result
+
+    def _openai_batch_call(self, texts: list[str], target_lang: str) -> list[str]:
+        import json
+        try: from openai import OpenAI
+        except ImportError: return []
+        client = OpenAI(api_key=self.api_key)
+        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
+        try:
+            resp = client.chat.completions.create(
+                model='gpt-4o',
+                messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': json.dumps(texts, ensure_ascii=False)}],
+                temperature=0.1
+            )
+            res = resp.choices[0].message.content.strip()
+            if res.startswith("```json"): res = res[7:]
+            if res.startswith("```"): res = res[3:]
+            if res.endswith("```"): res = res[:-3]
+            arr = json.loads(res.strip())
+            if isinstance(arr, list) and len(arr) == len(texts): return arr
+        except Exception: pass
+        return []
+
+    def _gemini_batch_call(self, texts: list[str], target_lang: str) -> list[str]:
+        import json
+        import time
+        try: from google import genai
+        except ImportError: return []
+        client = genai.Client(api_key=self.api_key)
+        prompt = (f"You are a professional translator. Translate the following JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in exact order. Do not wrap in markdown.\n\n{json.dumps(texts, ensure_ascii=False)}")
+        try:
+            resp = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            res = resp.text.strip()
+            if res.startswith("```json"): res = res[7:]
+            if res.startswith("```"): res = res[3:]
+            if res.endswith("```"): res = res[:-3]
+            arr = json.loads(res.strip())
+            if isinstance(arr, list) and len(arr) == len(texts): return arr
+        except Exception: pass
+        return []
+
+    def _openrouter_batch_call(self, texts: list[str], target_lang: str) -> list[str]:
+        import json, time
+        try: from openai import OpenAI
+        except ImportError: return []
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
+        system_prompt = (f"You are a professional translator. Translate the given JSON array of strings from {self.source_lang} to {target_lang}. Preserve ALL HTML tags exactly. Return ONLY a valid JSON array of strings in the exact same order. Do not wrap in markdown.")
+        user_content = json.dumps(texts, ensure_ascii=False)
+        free_models = [
+            "openai/gpt-oss-120b:free",
+            "minimax/minimax-m2.5:free",
+            "openai/gpt-oss-20b:free",
+            "openrouter/free"
+        ]
+        
+        for model in free_models:
+            for attempt in range(2):
+                try:
+                    if hasattr(self, '_last_or_call'):
+                        elapsed = time.time() - self._last_or_call
+                        if elapsed < 3.1: time.sleep(3.1 - elapsed)
+                    self._last_or_call = time.time()
+                    
+                    resp = client.chat.completions.create(
+                        model=model,
+                        messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_content}],
+                        extra_headers={"HTTP-Referer": "https://moodle.agent.local", "X-Title": "Moodle Translator Agent"},
+                        temperature=0.1
+                    )
+                    res = resp.choices[0].message.content.strip()
+                    if res.startswith("```json"): res = res[7:]
+                    if res.startswith("```"): res = res[3:]
+                    if res.endswith("```"): res = res[:-3]
+                    arr = json.loads(res.strip())
+                    if isinstance(arr, list) and len(arr) == len(texts):
+                        print(f'  [✓] OpenRouter BATCH OK ({model}), items: {len(texts)}')
+                        return arr
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    print(f'  [!] OpenRouter batch err ({model}): {str(e)[:150]}')
+                    if any(kw in err_msg for kw in ['404', '401', 'no endpoints found']): break
+                    if any(kw in err_msg for kw in ['429', 'rate limit', '502', '503']): time.sleep(4 * (attempt + 1))
+        return []
 
     def _openai_call(self, content: str, target_lang: str) -> str:
         try:
@@ -89,12 +216,7 @@ class MoodleMBZProcessor:
             resp = client.chat.completions.create(
                 model='gpt-4o',
                 messages=[
-                    {'role': 'system', 'content': (
-                        f'You are a professional translator. '
-                        f'Translate from {self.source_lang} to {target_lang}. '
-                        f'Preserve ALL HTML tags and their attributes exactly. '
-                        f'Return ONLY the translated content.'
-                    )},
+                    {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content.'},
                     {'role': 'user', 'content': content},
                 ],
             )
@@ -107,73 +229,65 @@ class MoodleMBZProcessor:
         try:
             import deepl
             translator = deepl.Translator(self.api_key)
-            result = translator.translate_text(
-                content, target_lang=target_lang.upper(), tag_handling='html')
+            result = translator.translate_text(content, target_lang=target_lang.upper(), tag_handling='html')
             return result.text
         except Exception as e:
             print(f'  [!] DeepL error: {e}')
             return content
 
-    def _gemini_translate(self, content: str, target_lang: str) -> str:
-        if len(content) <= CHUNK_CHARS:
-            return self._gemini_call(content, target_lang)
-        # Split long HTML at paragraph boundaries
-        parts = re.split(r'(?<=</p>)', content)
-        translated, chunk = [], ''
-        for part in parts:
-            if len(chunk) + len(part) > CHUNK_CHARS and chunk:
-                translated.append(self._gemini_call(chunk, target_lang))
-                chunk = part
-            else:
-                chunk += part
-        if chunk:
-            translated.append(self._gemini_call(chunk, target_lang))
-        return ''.join(translated)
-
     def _gemini_call(self, content: str, target_lang: str) -> str:
         import time
-        import re as _re
-        try:
-            from google import genai
-        except ImportError:
-            print('  [!] google-genai not installed')
-            return content
-
+        try: from google import genai
+        except ImportError: return content
         client = genai.Client(api_key=self.api_key)
-        prompt = (f'You are a professional translator. '
-                  f'Translate from {self.source_lang} to {target_lang}. '
-                  f'Preserve ALL HTML tags and their attributes exactly. '
-                  f'Return ONLY the translated content:\n\n{content}')
-
-        max_retries = 5
-        for attempt in range(max_retries):
+        prompt = f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content:\n\n{content}'
+        for attempt in range(3):
             try:
-                resp = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt
-                )
+                resp = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                 return resp.text.strip()
             except Exception as e:
-                err_str = str(e)
-                print(f'  [!] Gemini error (attempt {attempt+1}/{max_retries}): {err_str[:200]}')
+                if not any(kw in str(e).lower() for kw in ['429', 'quota', 'rate limit']): return content
+                time.sleep(5 * (2 ** attempt))
+        return content
 
-                is_rate_limit = any(kw in err_str.lower() for kw in [
-                    '429', 'resourceexhausted', 'quota', 'too many requests', 'rate limit'
-                ])
+    def _openrouter_call(self, content: str, target_lang: str) -> str:
+        import time
+        try: from openai import OpenAI
+        except ImportError: return content
 
-                if not is_rate_limit or attempt == max_retries - 1:
-                    return content
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
+        free_models = [
+            "openai/gpt-oss-120b:free",
+            "minimax/minimax-m2.5:free",
+            "openai/gpt-oss-20b:free",
+            "openrouter/free"
+        ]
 
-                # Try to parse retry-after seconds from error message
-                m = _re.search(r'retry[^0-9]{0,20}(\d+)', err_str, _re.IGNORECASE)
-                if m:
-                    wait_s = max(int(m.group(1)), 5)
-                else:
-                    wait_s = min(5 * (2 ** attempt), 120)  # 5, 10, 20, 40, 80... max 120s
-
-                print(f'  [!] Rate limit — czekam {wait_s}s (attempt {attempt+1}) ...')
-                time.sleep(wait_s)
-
+        for model in free_models:
+            for attempt in range(2):
+                try:
+                    if hasattr(self, '_last_or_call'):
+                        elapsed = time.time() - self._last_or_call
+                        if elapsed < 3.1: time.sleep(3.1 - elapsed)
+                    self._last_or_call = time.time()
+                    
+                    resp = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {'role': 'system', 'content': f'Translate from {self.source_lang} to {target_lang}. Preserve HTML. Return ONLY translated content.'},
+                            {'role': 'user', 'content': content},
+                        ],
+                        extra_headers={"HTTP-Referer": "https://moodle.agent.local", "X-Title": "Moodle Translator Agent"}
+                    )
+                    if resp.choices[0].message.content:
+                        print(f'  [✓] OpenRouter OK ({model})')
+                        return resp.choices[0].message.content.strip()
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    print(f'  [!] OpenRouter err ({model}): {str(e)[:150]}')
+                    if any(kw in err_msg for kw in ['404', '401', 'no endpoints found']): break
+                    if not any(kw in err_msg for kw in ['429', 'rate limit', '502', '503']): break
+                    time.sleep(4 * (attempt + 1))
         return content
 
     def wrap_mlang(self, translations: dict) -> str:
@@ -291,7 +405,8 @@ class MoodleMBZProcessor:
             return f'{open_tag}<![CDATA[{stripped}]]>{close_tag}'
 
         # Fresh CDATA with no mlang yet
-        print(f'      [CDATA] {len(stripped)} chars')
+        if getattr(self, '_extract_mode_set', None) is None:
+            print(f'      [CDATA] {len(stripped)} chars')
         translations = {
             lang: (stripped if lang == self.source_lang
                    else self.translate_text(stripped, lang))
@@ -314,12 +429,17 @@ class MoodleMBZProcessor:
         if not src_content:
             return f'{open_tag}{inner}{close_tag}'
 
-        print(f'      [mlang] from {{{self.source_lang}}} ({len(src_content)} chars)')
-        translations = {
-            lang: (src_content if lang == self.source_lang
-                   else self.translate_text(src_content, lang))
-            for lang in self.target_langs
-        }
+        if getattr(self, '_extract_mode_set', None) is None:
+            print(f'      [mlang] from {{{self.source_lang}}} ({len(src_content)} chars)')
+        translations = {}
+        for lang in self.target_langs:
+            if lang == self.source_lang:
+                translations[lang] = src_content
+            else:
+                unescaped = _html.unescape(src_content)
+                translated = self.translate_text(unescaped, lang)
+                translations[lang] = _html.escape(translated)
+                
         new_inner = self.wrap_mlang(translations)
         if tag == 'name' and len(new_inner) > 255:
             return f'{open_tag}{inner}{close_tag}'
@@ -331,7 +451,8 @@ class MoodleMBZProcessor:
 
     # ── Strategy C ── plain text ──────────────────────────────────────────────
     def _strat_plain(self, open_tag, text, close_tag, cc, tag, original_inner):
-        print(f'      [plain] {text[:60]!r}')
+        if getattr(self, '_extract_mode_set', None) is None:
+            print(f'      [plain] {text[:60]!r}')
         translations = {}
         for lang in self.target_langs:
             if lang == self.source_lang:
@@ -366,6 +487,22 @@ class MoodleMBZProcessor:
         except Exception:
             return content_bytes
 
+        # 1. Extraction Phase (Batching)
+        self._extract_mode_set = set()
+        for tag in CONTENT_TAGS:
+            self._replace_in_tag(content, tag)
+            
+        extract_set = self._extract_mode_set
+        self._extract_mode_set = None
+
+        # 2. Translate Extracted Texts
+        if not hasattr(self, '_translation_cache'):
+            self._translation_cache = {}
+            
+        if extract_set:
+            self._batch_translate(extract_set)
+
+        # 3. Replacement Phase
         total_changes = 0
         for tag in CONTENT_TAGS:
             content, n = self._replace_in_tag(content, tag)

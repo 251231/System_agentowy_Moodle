@@ -23,12 +23,13 @@ services:
     container_name: moodle_backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     depends_on:
       db:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://moodle:moodle_pass@db:5432/moodle_agents
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -37,7 +38,7 @@ services:
     build: ./frontend
     container_name: moodle_frontend
     ports:
-      - "5173:5173"
+      - "5175:5173"
     depends_on:
       - backend
     environment:
