@@ -63,7 +63,7 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         )
         
         if config.get("translate"):
-            processor.process_mbz(input_path, output_path)
+            processor.process_mbz(input_path, output_path, task_id=task_id)
         else:
             # If translation is off, just copy the file over
             shutil.copy2(input_path, output_path)
@@ -197,4 +197,21 @@ def download(task_id: str, db: Session = Depends(get_db), current_user: User = D
         path=path,
         filename=f"processed_{t.original_filename}",
         media_type="application/octet-stream",
+    )
+
+
+@router.get("/tasks/{task_id}/texts")
+def get_task_texts(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t:
+        return {"error": "Task not found"}
+    
+    path = UPLOAD_DIR / f"texts_{task_id}.json"
+    if not path.exists():
+        return {"error": "Texts file not found on disk"}
+        
+    return FileResponse(
+        path=path,
+        filename=f"texts_{t.original_filename.replace('.mbz', '')}.json",
+        media_type="application/json",
     )
