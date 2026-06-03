@@ -92,12 +92,26 @@ const App = () => {
     api_key: '',
     translate: true,
     generate_h5p: false,
+    h5p_types: ['Pytanie / Odpowiedź', 'Pojęcie / Definicja'],
+    h5p_level: 'Mieszany (auto)',
+    h5p_amount: 5,
+    h5p_focus: ['Pojęcia kluczowe', 'Definicje'],
+    h5p_instructions: '',
   });
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [user, setUser] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const fileInputRef = useRef(null);
   const dropdownRef = useRef(null);
+
+  const toggleH5pType = (val) => setConfig(p => ({
+    ...p, h5p_types: p.h5p_types.includes(val) ? p.h5p_types.filter(t => t !== val) : [...p.h5p_types, val]
+  }));
+
+  const toggleH5pFocus = (val) => setConfig(p => ({
+    ...p, h5p_focus: p.h5p_focus.includes(val) ? p.h5p_focus.filter(t => t !== val) : [...p.h5p_focus, val]
+  }));
+
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -188,6 +202,11 @@ const App = () => {
     fd.append('target_langs', config.target_langs.join(','));
     fd.append('api_type', config.api_type);
     if (config.api_key) fd.append('api_key', config.api_key);
+    fd.append('h5p_types', config.h5p_types.join(','));
+    fd.append('h5p_level', config.h5p_level);
+    fd.append('h5p_amount', config.h5p_amount);
+    fd.append('h5p_focus', config.h5p_focus.join(','));
+    fd.append('h5p_instructions', config.h5p_instructions);
     try {
       await api.post('/tasks', fd);
       setFile(null);
@@ -285,11 +304,13 @@ const App = () => {
 
   const runHint = !file
     ? 'Wybierz plik aby kontynuować'
-    : config.target_langs.length === 0
-      ? 'Wybierz co najmniej jeden język docelowy'
-      : '';
+    : (!config.translate && !config.generate_h5p)
+      ? 'Wybierz co najmniej jeden agent'
+      : (config.translate && config.target_langs.length === 0)
+        ? 'Wybierz co najmniej jeden język docelowy'
+        : '';
 
-  const canRun = !!file && config.target_langs.length > 0 && !isSubmitting;
+  const canRun = !!file && (config.translate || config.generate_h5p) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
@@ -378,70 +399,147 @@ const App = () => {
           )}
         </div>
 
-        {/* Krok 2: Tłumaczenie */}
+        {/* Krok 2: Wybierz agenty */}
         <div className="sidebar-section">
           <div
             className="sidebar-section-header active"
             onClick={() => toggleSection(2)}
           >
             <span className="step-num">2</span>
-            Opcje tłumaczenia
+            Wybierz agenty
           </div>
           {!collapsedSections[2] && (
             <div className="sidebar-section-body">
-              <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
-                <div className="agent-config-label">
-                  <IconGlobe />
-                  Konfiguracja języków
-                </div>
+              <div className="agent-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+                <button 
+                  className={`agent-tab ${config.translate ? 'active' : ''}`} 
+                  onClick={() => setConfig({ ...config, translate: !config.translate })}
+                >
+                  <IconGlobe /> Tłumaczenie
+                </button>
+                <button 
+                  className={`agent-tab ${config.generate_h5p ? 'active' : ''}`} 
+                  onClick={() => setConfig({ ...config, generate_h5p: !config.generate_h5p })}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" />
+                    <path d="M8 21h8M12 17v4" />
+                  </svg>
+                  Fiszki AI
+                </button>
+              </div>
 
-                <div className="field">
-                  <label>Język źródłowy</label>
-                  <select
-                    value={config.source_lang}
-                    onChange={e => setConfig({ ...config, source_lang: e.target.value })}
-                  >
-                    {LANGUAGES.map(l => (
-                      <option key={l.code} value={l.code}>{l.label}</option>
-                    ))}
-                  </select>
-                </div>
+              {config.translate && (
+                <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
+                  <div className="agent-config-label">
+                    <IconGlobe />
+                    Opcje tłumaczenia
+                  </div>
 
-                <div className="field">
-                  <label>Języki docelowe</label>
-                  <div className="tag-group lang-group">
-                    {TARGET_LANG_TAGS.map(tag => (
-                      <span
-                        key={tag}
-                        className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
-                        onClick={() => toggleTargetLang(tag)}
-                      >
-                        {tag}
-                      </span>
-                    ))}
+                  <div className="field">
+                    <label>Język źródłowy</label>
+                    <select
+                      value={config.source_lang}
+                      onChange={e => setConfig({ ...config, source_lang: e.target.value })}
+                    >
+                      {LANGUAGES.map(l => (
+                        <option key={l.code} value={l.code}>{l.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Języki docelowe</label>
+                    <div className="tag-group lang-group">
+                      {TARGET_LANG_TAGS.map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
+                          onClick={() => toggleTargetLang(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
+              )}
 
-                <div className="field">
-                  <label>Opcje dodatkowe</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.translate}
-                      onChange={e => setConfig({ ...config, translate: e.target.checked })}
+              {config.generate_h5p && (
+                <div className="agent-config-section">
+                  <div className="agent-config-label">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8M12 17v4" />
+                    </svg>
+                    Opcje fiszek
+                  </div>
+
+                  <div className="field">
+                    <label>Typ fiszek (multi-wybór)</label>
+                    <div className="tag-group">
+                      {['Pytanie / Odpowiedź', 'Pojęcie / Definicja', 'Uzupełnianie luk', 'Prawda / Fałsz'].map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item ${config.h5p_types.includes(tag) ? 'active' : ''}`}
+                          onClick={() => toggleH5pType(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Poziom trudności</label>
+                    <select
+                      value={config.h5p_level}
+                      onChange={e => setConfig({ ...config, h5p_level: e.target.value })}
+                    >
+                      <option value="Mieszany (auto)">Mieszany (auto)</option>
+                      <option value="Łatwy">Łatwy</option>
+                      <option value="Średni">Średni</option>
+                      <option value="Trudny">Trudny</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Liczba fiszek na moduł</label>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <div className="number-stepper">
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.max(1, p.h5p_amount - 1) }))}>−</button>
+                        <input className="stepper-val" type="number" value={config.h5p_amount} readOnly />
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.min(30, p.h5p_amount + 1) }))}>+</button>
+                      </div>
+                      <span className="stepper-hint">fiszek / moduł (1–30)</span>
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Obszary tematyczne</label>
+                    <div className="tag-group focus-group">
+                      {['Pojęcia kluczowe', 'Definicje', 'Algorytmy', 'Wzory', 'Przykłady kodu', 'Porównania'].map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item ${config.h5p_focus.includes(tag) ? 'active' : ''}`}
+                          onClick={() => toggleH5pFocus(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Dodatkowe instrukcje dla AI</label>
+                    <textarea
+                      placeholder="np. Skup się na zastosowaniach praktycznych. Używaj przykładów w Pythonie. Unikaj teorii formalnej..."
+                      value={config.h5p_instructions}
+                      onChange={e => setConfig({ ...config, h5p_instructions: e.target.value })}
                     />
-                    Tłumacz kurs na inne języki
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.generate_h5p}
-                      onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
-                    />
-                    Generuj Quiz H5P na podstawie treści
-                  </label>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>

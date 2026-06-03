@@ -3,22 +3,40 @@ import zipfile
 import re
 from pathlib import Path
 
-def generate_h5p_quiz_json(texts, api_type, api_key):
+def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     """
     Generate H5P quiz questions using the specified LLM.
     `texts` is a list of strings extracted from the course.
     """
+    if config is None:
+        config = {}
+        
+    amount = config.get("h5p_amount", 5)
+    types = config.get("h5p_types", ["Pytanie / Odpowiedź"])
+    level = config.get("h5p_level", "Mieszany (auto)")
+    focus = config.get("h5p_focus", [])
+    instructions = config.get("h5p_instructions", "")
+
+    types_str = ", ".join(types) if types else "dowolne"
+    focus_str = ", ".join(focus) if focus else "brak"
+
     combined_text = "\n\n".join(texts)
     # Truncate text to avoid exceeding token limits (rough approximation)
     if len(combined_text) > 20000:
         combined_text = combined_text[:20000]
 
     prompt = (
-        "You are a teacher. Based on the following course content, create a multiple-choice quiz with up to 20 questions. "
+        f"You are a teacher. Based on the following course content, create a multiple-choice quiz with EXACTLY {amount} questions.\n"
+        f"Difficulty level: {level}\n"
+        f"Question types/styles: {types_str}\n"
+        f"Thematic focus: {focus_str}\n"
+        f"Additional instructions: {instructions}\n\n"
         "Return ONLY a valid JSON array where each object has the following keys:\n"
         "- 'question' (string): the question text.\n"
-        "- 'options' (array of strings): 4 possible answers.\n"
-        "- 'correctIndex' (integer): the 0-based index of the correct answer in the 'options' array.\n\n"
+        "- 'options' (array of strings): exactly 4 possible answers.\n"
+        "- 'correctIndex' (integer): the 0-based index of the correct answer in the 'options' array.\n"
+        "- 'tip' (string): an optional short tip for the question.\n"
+        "- 'feedback' (string): an explanation of why the correct answer is correct.\n\n"
         "Do not wrap the response in markdown blocks. Just output raw JSON.\n\n"
         f"Course content:\n{combined_text}"
     )
@@ -81,7 +99,9 @@ def generate_h5p_quiz_json(texts, api_type, api_key):
             {
                 "question": "Przykładowe pytanie wygenerowane (brak klucza API/AI)?",
                 "options": ["Odpowiedź A", "Odpowiedź B", "Odpowiedź C", "Odpowiedź D"],
-                "correctIndex": 0
+                "correctIndex": 0,
+                "tip": "To jest podpowiedź mockowa.",
+                "feedback": "Odpowiedź A jest prawidłowa, ponieważ to mock."
             }
         ]
 
@@ -112,12 +132,13 @@ def create_h5p_archive(questions, output_path: str, title="Wygenerowany Quiz H5P
     for q in questions:
         answers = []
         for idx, opt in enumerate(q.get("options", [])):
+            is_correct = (idx == q.get("correctIndex", 0))
             answers.append({
                 "text": f"<div>{opt}</div>",
-                "correct": idx == q.get("correctIndex", 0),
+                "correct": is_correct,
                 "tipsAndFeedback": {
-                    "tip": "",
-                    "chosenFeedback": "",
+                    "tip": q.get("tip", "") if is_correct else "",
+                    "chosenFeedback": f"<div>{q.get('feedback', '')}</div>" if is_correct else f"<div>Niepoprawnie. {q.get('feedback', '')}</div>",
                     "notChosenFeedback": ""
                 }
             })

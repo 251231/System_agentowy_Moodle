@@ -101,7 +101,8 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
                 questions = generate_h5p_quiz_json(
                     source_texts, 
                     config.get("api_type", "none"), 
-                    config.get("api_key", "")
+                    config.get("api_key", ""),
+                    config
                 )
                 
                 if questions:
@@ -152,6 +153,11 @@ async def create_task(
     target_langs:  str  = Form("en,pl"),
     api_type:      str  = Form("none"),
     api_key:       str  = Form(""),
+    h5p_types:        str = Form(""),
+    h5p_level:        str = Form("Mieszany (auto)"),
+    h5p_amount:       int = Form(5),
+    h5p_focus:        str = Form(""),
+    h5p_instructions: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(deps.get_current_active_user),
 ):
@@ -162,6 +168,11 @@ async def create_task(
         "target_langs":  [l.strip() for l in target_langs.split(",")],
         "api_type":      api_type,
         "api_key":       api_key or os.environ.get("OPENAI_API_KEY", ""),
+        "h5p_types":        [t.strip() for t in h5p_types.split(",") if t.strip()],
+        "h5p_level":        h5p_level,
+        "h5p_amount":       h5p_amount,
+        "h5p_focus":        [f.strip() for f in h5p_focus.split(",") if f.strip()],
+        "h5p_instructions": h5p_instructions,
     }
 
     # For edge cases where API KEY is not in os.environ yet but maybe another key type
