@@ -77,13 +77,44 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
             progress_callback=update_progress
         )
         
+        extract_set = None
         if config.get("translate"):
-            processor.process_mbz(input_path, output_path, task_id=task_id)
+            extract_set = processor.process_mbz(input_path, output_path, task_id=task_id)
         else:
             # If translation is off, just copy the file over
             shutil.copy2(input_path, output_path)
+            if config.get("generate_h5p"):
+                extract_set = processor._scan_and_extract_all(input_path)
 
         _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
+
+        if config.get("generate_h5p"):
+            _set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie quizu...")
+            try:
+                from app.core.h5p_generator import generate_h5p_quiz_json, create_h5p_archive
+                if extract_set:
+                    # Get unique original texts
+                    source_texts = list(set(text for text, lang in extract_set))
+                else:
+                    source_texts = []
+                    
+                questions = generate_h5p_quiz_json(
+                    source_texts, 
+                    config.get("api_type", "none"), 
+                    config.get("api_key", "")
+                )
+                
+                if questions:
+                    h5p_filename = f"quiz_{task_id}.h5p"
+                    h5p_path = UPLOAD_DIR / h5p_filename
+                    create_h5p_archive(questions, str(h5p_path))
+                    
+                    task.h5p_filename = h5p_filename
+                    _set_subtask(db, task_id, "H5P Generator", "completed", f"Wygenerowano quiz ({len(questions)} pytań)")
+                else:
+                    _set_subtask(db, task_id, "H5P Generator", "failed", "Nie udało się wygenerować pytań z podanych tekstów.")
+            except Exception as e:
+                _set_subtask(db, task_id, "H5P Generator", "failed", f"Błąd: {str(e)}")
 
         _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
 
@@ -116,6 +147,7 @@ async def create_task(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     translate:     bool = Form(False),
+    generate_h5p:  bool = Form(False),
     source_lang:   str  = Form("en"),
     target_langs:  str  = Form("en,pl"),
     api_type:      str  = Form("none"),
@@ -125,6 +157,7 @@ async def create_task(
 ):
     config = {
         "translate":     translate,
+        "generate_h5p":  generate_h5p,
         "source_lang":   source_lang,
         "target_langs":  [l.strip() for l in target_langs.split(",")],
         "api_type":      api_type,
@@ -166,6 +199,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
             "original_filename": t.original_filename,
             "status":            t.status,
             "progress":          t.progress,
+            "h5p_filename":      t.h5p_filename,
             "created_at":        t.created_at.isoformat() if t.created_at else None,
             "subtasks": [
                 {"agent": s.agent_name, "status": s.status, "log": s.log}
@@ -185,6 +219,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
         "original_filename": t.original_filename,
         "status":            t.status,
         "progress":          t.progress,
+        "h5p_filename":      t.h5p_filename,
         "subtasks": [
             {"agent": s.agent_name, "status": s.status, "log": s.log}
             for s in t.subtasks
@@ -234,4 +269,19 @@ def get_task_texts(task_id: str, db: Session = Depends(get_db), current_user: Us
         path=path,
         filename=f"texts_{t.original_filename.replace('.mbz', '')}.json",
         media_type="application/json",
+    )
+
+
+@router.get("/download-h5p/{task_id}")
+def download_h5p(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t or t.status != "completed" or not t.h5p_filename:
+        return {"error": "H5P file not ready or not found"}
+    path = UPLOAD_DIR / t.h5p_filename
+    if not path.exists():
+        return {"error": "File missing on disk"}
+    return FileResponse(
+        path=path,
+        filename=f"quiz_{t.original_filename.replace('.mbz', '.h5p')}",
+        media_type="application/zip",
     )

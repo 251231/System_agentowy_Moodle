@@ -643,7 +643,7 @@ class MoodleMBZProcessor:
             return content.encode('utf-8')
         return content_bytes
 
-    def process_mbz(self, input_mbz: str, output_mbz: str, task_id: str = None):
+    def process_mbz(self, input_mbz: str, output_mbz: str, task_id: str = None) -> set:
         """
         Stream through the archive, modifying XML byte content in-place.
 
@@ -711,6 +711,8 @@ class MoodleMBZProcessor:
             
         if self.progress_callback:
             self.progress_callback(100, "Zakończono przetwarzanie.")
+            
+        return global_extract_set
 
     def _process_tar(self, input_mbz: str, output_mbz: str):
         processed = 0

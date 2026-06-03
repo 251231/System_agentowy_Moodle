@@ -90,6 +90,8 @@ const App = () => {
     target_langs: ['en', 'pl'],
     api_type: 'none',
     api_key: '',
+    translate: true,
+    generate_h5p: false,
   });
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [user, setUser] = useState(null);
@@ -180,7 +182,8 @@ const App = () => {
     setIsSubmitting(true);
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('translate', true);
+    fd.append('translate', config.translate);
+    fd.append('generate_h5p', config.generate_h5p);
     fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs.join(','));
     fd.append('api_type', config.api_type);
@@ -244,6 +247,27 @@ const App = () => {
     } catch (err) {
       console.error('Download texts error:', err);
       alert('Nie udało się pobrać pliku tekstów JSON.');
+    }
+  };
+
+  const handleDownloadH5p = async (task, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const response = await api.get(`/download-h5p/${task.id}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `quiz_${task.original_filename.replace('.mbz', '.h5p')}`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download H5P error:', err);
+      alert('Nie udało się pobrać pliku H5P.');
     }
   };
 
@@ -396,6 +420,26 @@ const App = () => {
                       </span>
                     ))}
                   </div>
+                </div>
+
+                <div className="field">
+                  <label>Opcje dodatkowe</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.translate}
+                      onChange={e => setConfig({ ...config, translate: e.target.checked })}
+                    />
+                    Tłumacz kurs na inne języki
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.generate_h5p}
+                      onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
+                    />
+                    Generuj Quiz H5P na podstawie treści
+                  </label>
                 </div>
               </div>
             </div>
@@ -556,6 +600,16 @@ const App = () => {
                       )}
                       {task.status === 'completed' && (
                         <div style={{ display: 'flex', gap: '8px' }}>
+                          {task.h5p_filename && (
+                            <button
+                              className="btn-dl"
+                              onClick={e => handleDownloadH5p(task, e)}
+                              style={{ background: 'var(--primary)', borderColor: 'var(--primary)', color: '#fff' }}
+                              title="Pobierz wygenerowany Quiz H5P"
+                            >
+                              <IconDl /> Quiz H5P
+                            </button>
+                          )}
                           <button
                             className="btn-dl"
                             onClick={e => handleDownloadTexts(task, e)}
