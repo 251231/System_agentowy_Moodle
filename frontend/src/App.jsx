@@ -399,71 +399,71 @@ const App = () => {
           )}
         </div>
 
-        {/* Krok 2: Wybierz agenty */}
+        {/* Krok 2: Opcje tłumaczenia */}
         <div className="sidebar-section">
           <div
             className="sidebar-section-header active"
             onClick={() => toggleSection(2)}
           >
             <span className="step-num">2</span>
-            Wybierz agenty
+            Opcje tłumaczenia
           </div>
           {!collapsedSections[2] && (
             <div className="sidebar-section-body">
               <div className="agent-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
-                <button 
-                  className={`agent-tab ${config.translate ? 'active' : ''}`} 
-                  onClick={() => setConfig({ ...config, translate: !config.translate })}
-                >
-                  <IconGlobe /> Tłumaczenie
-                </button>
-                <button 
-                  className={`agent-tab ${config.generate_h5p ? 'active' : ''}`} 
-                  onClick={() => setConfig({ ...config, generate_h5p: !config.generate_h5p })}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="2" y="3" width="20" height="14" rx="2" />
-                    <path d="M8 21h8M12 17v4" />
-                  </svg>
-                  Fiszki AI
-                </button>
-              </div>
+              <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
+                <div className="agent-config-label">
+                  <IconGlobe />
+                  Konfiguracja języków
+                </div>
 
-              {config.translate && (
-                <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
-                  <div className="agent-config-label">
-                    <IconGlobe />
-                    Opcje tłumaczenia
-                  </div>
+                <div className="field">
+                  <label>Język źródłowy</label>
+                  <select
+                    value={config.source_lang}
+                    onChange={e => setConfig({ ...config, source_lang: e.target.value })}
+                  >
+                    {LANGUAGES.map(l => (
+                      <option key={l.code} value={l.code}>{l.label}</option>
+                    ))}
+                  </select>
+                </div>
 
-                  <div className="field">
-                    <label>Język źródłowy</label>
-                    <select
-                      value={config.source_lang}
-                      onChange={e => setConfig({ ...config, source_lang: e.target.value })}
-                    >
-                      {LANGUAGES.map(l => (
-                        <option key={l.code} value={l.code}>{l.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="field">
-                    <label>Języki docelowe</label>
-                    <div className="tag-group lang-group">
-                      {TARGET_LANG_TAGS.map(tag => (
-                        <span
-                          key={tag}
-                          className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
-                          onClick={() => toggleTargetLang(tag)}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
+                <div className="field">
+                  <label>Języki docelowe</label>
+                  <div className="tag-group lang-group">
+                    {TARGET_LANG_TAGS.map(tag => (
+                      <span
+                        key={tag}
+                        className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
+                        onClick={() => toggleTargetLang(tag)}
+                      >
+                        {tag}
+                      </span>
+                    ))}
                   </div>
                 </div>
-              )}
+
+                <div className="field">
+                  <label>Opcje dodatkowe</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.translate}
+                      onChange={e => setConfig({ ...config, translate: e.target.checked })}
+                    />
+                    Tłumacz kurs na inne języki
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.generate_h5p}
+                      onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
+                    />
+                    Generuj Quiz H5P na podstawie treści
+                  </label>
+                </div>
+              </div>
 
               {config.generate_h5p && (
                 <div className="agent-config-section">
@@ -481,7 +481,7 @@ const App = () => {
                       {['Pytanie / Odpowiedź', 'Pojęcie / Definicja', 'Uzupełnianie luk', 'Prawda / Fałsz'].map(tag => (
                         <span
                           key={tag}
-                          className={`tag-item ${config.h5p_types.includes(tag) ? 'active' : ''}`}
+                          className={`tag-item lg ${config.h5p_types.includes(tag) ? 'active' : ''}`}
                           onClick={() => toggleH5pType(tag)}
                         >
                           {tag}
@@ -521,7 +521,7 @@ const App = () => {
                       {['Pojęcia kluczowe', 'Definicje', 'Algorytmy', 'Wzory', 'Przykłady kodu', 'Porównania'].map(tag => (
                         <span
                           key={tag}
-                          className={`tag-item ${config.h5p_focus.includes(tag) ? 'active' : ''}`}
+                          className={`tag-item lg ${config.h5p_focus.includes(tag) ? 'active' : ''}`}
                           onClick={() => toggleH5pFocus(tag)}
                         >
                           {tag}
