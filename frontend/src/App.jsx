@@ -410,7 +410,6 @@ const App = () => {
           </div>
           {!collapsedSections[2] && (
             <div className="sidebar-section-body">
-              <div className="agent-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
               <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
                 <div className="agent-config-label">
                   <IconGlobe />
