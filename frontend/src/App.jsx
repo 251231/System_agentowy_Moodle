@@ -92,10 +92,10 @@ const App = () => {
     api_key: '',
     translate: true,
     generate_h5p: false,
-    h5p_types: ['Pytanie / Odpowiedź', 'Pojęcie / Definicja'],
+    h5p_types: ['Quiz (ABCD)'],
     h5p_level: 'Mieszany (auto)',
     h5p_amount: 5,
-    h5p_focus: ['Pojęcia kluczowe', 'Definicje'],
+    h5p_focus: [],
     h5p_instructions: '',
   });
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
@@ -279,7 +279,7 @@ const App = () => {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `quiz_${task.original_filename.replace('.mbz', '.h5p')}`);
+      link.setAttribute('download', `h5p_${task.original_filename.replace('.mbz', '.h5p')}`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
@@ -459,7 +459,7 @@ const App = () => {
                       checked={config.generate_h5p}
                       onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
                     />
-                    Generuj Quiz H5P na podstawie treści
+                    Generuj treści H5P
                   </label>
                 </div>
               </div>
@@ -471,13 +471,13 @@ const App = () => {
                       <rect x="2" y="3" width="20" height="14" rx="2" />
                       <path d="M8 21h8M12 17v4" />
                     </svg>
-                    Opcje fiszek
+                    Opcje treści H5P
                   </div>
 
                   <div className="field">
-                    <label>Typ fiszek (multi-wybór)</label>
+                    <label>Format zawartości</label>
                     <div className="tag-group">
-                      {['Pytanie / Odpowiedź', 'Pojęcie / Definicja', 'Uzupełnianie luk', 'Prawda / Fałsz'].map(tag => (
+                      {['Quiz (ABCD)', 'Fiszki', 'Uzupełnianie luk', 'Prawda / Fałsz'].map(tag => (
                         <span
                           key={tag}
                           className={`tag-item lg ${config.h5p_types.includes(tag) ? 'active' : ''}`}
@@ -503,21 +503,9 @@ const App = () => {
                   </div>
 
                   <div className="field">
-                    <label>Liczba fiszek na moduł</label>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <div className="number-stepper">
-                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.max(1, p.h5p_amount - 1) }))}>−</button>
-                        <input className="stepper-val" type="number" value={config.h5p_amount} readOnly />
-                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.min(30, p.h5p_amount + 1) }))}>+</button>
-                      </div>
-                      <span className="stepper-hint">fiszek / moduł (1–30)</span>
-                    </div>
-                  </div>
-
-                  <div className="field">
-                    <label>Obszary tematyczne</label>
+                    <label>Obszar tematyczny <span style={{fontSize:'11px', opacity: 0.5, fontWeight: 400}}>(opcjonalnie – zostaw puste = mieszany)</span></label>
                     <div className="tag-group focus-group">
-                      {['Pojęcia kluczowe', 'Definicje', 'Algorytmy', 'Wzory', 'Przykłady kodu', 'Porównania'].map(tag => (
+                      {['Pojęcia kluczowe', 'Definicje i terminy', 'Przykłady praktyczne', 'Zastosowania', 'Porównania', 'Podsumowanie'].map(tag => (
                         <span
                           key={tag}
                           className={`tag-item lg ${config.h5p_focus.includes(tag) ? 'active' : ''}`}
@@ -528,6 +516,20 @@ const App = () => {
                       ))}
                     </div>
                   </div>
+
+                  <div className="field">
+                    <label>Liczba elementów</label>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <div className="number-stepper">
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.max(1, p.h5p_amount - 1) }))}>−</button>
+                        <input className="stepper-val" type="number" value={config.h5p_amount} readOnly />
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.min(30, p.h5p_amount + 1) }))}>+</button>
+                      </div>
+                      <span className="stepper-hint">elementów (1–30)</span>
+                    </div>
+                  </div>
+
+
 
                   <div className="field">
                     <label>Dodatkowe instrukcje dla AI</label>
@@ -702,9 +704,9 @@ const App = () => {
                               className="btn-dl"
                               onClick={e => handleDownloadH5p(task, e)}
                               style={{ background: 'var(--primary)', borderColor: 'var(--primary)', color: '#fff' }}
-                              title="Pobierz wygenerowany Quiz H5P"
+                              title="Pobierz wygenerowane treści H5P"
                             >
-                              <IconDl /> Quiz H5P
+                              <IconDl /> Treści H5P
                             </button>
                           )}
                           <button

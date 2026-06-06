@@ -84,34 +84,46 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
             # If translation is off, just copy the file over
             shutil.copy2(input_path, output_path)
             if config.get("generate_h5p"):
-                extract_set = processor._scan_and_extract_all(input_path)
+                # Skanuj kurs aby wydobyć teksty do H5P
+                _set_subtask(db, task_id, "H5P Generator", "processing", "Wydobywanie tekst\u00f3w z kursu...")
+                source_texts = processor.extract_source_texts(input_path)
+                # Tworzymy fake extract_set kompatybilny z dalszym kodem
+                extract_set = set((t, config.get("source_lang", "en")) for t in source_texts)
+                print(f"[H5P] Scan: {len(source_texts)} unique texts extracted from MBZ")
+
 
         _set_subtask(db, task_id, "Translation Processor", "completed", "Processing completed.")
 
         if config.get("generate_h5p"):
-            _set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie quizu...")
+            _set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie treści H5P...")
             try:
                 from app.core.h5p_generator import generate_h5p_quiz_json, create_h5p_archive
+
+                # --- zbierz teksty źródłowe ---
                 if extract_set:
-                    # Get unique original texts
                     source_texts = list(set(text for text, lang in extract_set))
                 else:
                     source_texts = []
-                    
+
+                _set_subtask(db, task_id, "H5P Generator", "processing",
+                             f"Generowanie treści H5P z {len(source_texts)} fragmentów tekstu...")
+                print(f"[H5P] Sending {len(source_texts)} text chunks to LLM")
+
                 questions = generate_h5p_quiz_json(
-                    source_texts, 
-                    config.get("api_type", "none"), 
+                    source_texts,
+                    config.get("api_type", "none"),
                     config.get("api_key", ""),
                     config
                 )
-                
+
                 if questions:
-                    h5p_filename = f"quiz_{task_id}.h5p"
+                    h5p_filename = f"h5p_{task_id}.h5p"
                     h5p_path = UPLOAD_DIR / h5p_filename
                     create_h5p_archive(questions, str(h5p_path))
                     
                     task.h5p_filename = h5p_filename
-                    _set_subtask(db, task_id, "H5P Generator", "completed", f"Wygenerowano quiz ({len(questions)} pytań)")
+                    db.commit()
+                    _set_subtask(db, task_id, "H5P Generator", "completed", f"Wygenerowano treści H5P ({len(questions)} elementów)")
                 else:
                     _set_subtask(db, task_id, "H5P Generator", "failed", "Nie udało się wygenerować pytań z podanych tekstów.")
             except Exception as e:
@@ -293,6 +305,6 @@ def download_h5p(task_id: str, db: Session = Depends(get_db), current_user: User
         return {"error": "File missing on disk"}
     return FileResponse(
         path=path,
-        filename=f"quiz_{t.original_filename.replace('.mbz', '.h5p')}",
+        filename=f"h5p_{t.original_filename.replace('.mbz', '.h5p')}",
         media_type="application/zip",
     )

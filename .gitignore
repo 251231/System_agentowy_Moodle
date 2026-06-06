@@ -19,3 +19,19 @@ venv/
 /backend/venv/
 /backend/.env
 /backend/temp/
+
+# database & SQLite
+*.db
+/backend/*.db
+
+# semantics extraction scripts and files
+/backend/column_semantics.json
+/backend/column_semantics_clean.json
+/backend/fetch_semantics.py
+/backend/parse_semantics.py
+/backend/test_fiszki_extracted/
+
+# local test H5P files
+*.h5p
+/backend/*.h5p
+

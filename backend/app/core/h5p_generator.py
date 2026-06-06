@@ -1,224 +1,491 @@
+"""
+H5P Generator – pełna wersja produkcyjna.
+
+Generuje plik H5P na podstawie danych JSON zwróconych przez LLM.
+Obsługuje typy: multichoice, dialogcard, dragtext, truefalse.
+Jeżeli wybrano tylko fiszki (dialogcard) – generuje czysty H5P.Dialogcards jako mainLibrary.
+Jeżeli mix lub pytania – generuje H5P.Column z zagnieżdżonymi blokami.
+"""
 import json
 import zipfile
 import re
+import uuid
 from pathlib import Path
+
+
+# ── LLM generation ────────────────────────────────────────────────────────────
 
 def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     """
-    Generate H5P quiz questions using the specified LLM.
-    `texts` is a list of strings extracted from the course.
+    Wywołuje LLM i zwraca listę obiektów – surowych danych dla create_h5p_archive().
     """
     if config is None:
         config = {}
-        
+
     amount = config.get("h5p_amount", 5)
-    types = config.get("h5p_types", ["Pytanie / Odpowiedź"])
-    level = config.get("h5p_level", "Mieszany (auto)")
-    focus = config.get("h5p_focus", [])
+    types  = config.get("h5p_types", ["Quiz (ABCD)"])
+    level  = config.get("h5p_level", "Mieszany (auto)")
+    focus  = config.get("h5p_focus", [])
     instructions = config.get("h5p_instructions", "")
 
-    types_str = ", ".join(types) if types else "dowolne"
-    focus_str = ", ".join(focus) if focus else "brak"
+    # --- buduj instrukcje schematu JSON w zależności od wybranych typów ---
+    type_instructions = []
+    if "Quiz (ABCD)" in types:
+        type_instructions.append(
+            "- {\"type\": \"multichoice\", \"question\": \"<string>\", \"options\": [\"<A>\",\"<B>\",\"<C>\",\"<D>\"], "
+            "\"correctIndex\": <0-based int>, \"feedback\": \"<string>\"}"
+        )
+    if "Fiszki" in types:
+        type_instructions.append(
+            "- {\"type\": \"dialogcard\", \"front\": \"<pojęcie/termin>\", \"back\": \"<definicja/wyjaśnienie>\"}"
+        )
+    if "Uzupełnianie luk" in types:
+        type_instructions.append(
+            "- {\"type\": \"dragtext\", \"text\": \"<zdanie z 1-2 słowami otoczonymi gwiazdkami, np. Moodle is an *LMS* system.>\"}"
+        )
+    if "Prawda / Fałsz" in types:
+        type_instructions.append(
+            "- {\"type\": \"truefalse\", \"question\": \"<string>\", \"correctAnswer\": <true|false>, "
+            "\"feedback\": \"<string>\"}"
+        )
 
+    if not type_instructions:
+        # fallback
+        type_instructions.append(
+            "- {\"type\": \"multichoice\", \"question\": \"<string>\", \"options\": [\"<A>\",\"<B>\",\"<C>\",\"<D>\"], "
+            "\"correctIndex\": <0-based int>, \"feedback\": \"<string>\"}"
+        )
+
+    schema_prompt = "\n".join(type_instructions)
+    focus_str     = ", ".join(focus) if focus else "brak"
     combined_text = "\n\n".join(texts)
-    # Truncate text to avoid exceeding token limits (rough approximation)
+
+    # Ogranicz rozmiar kontekstu (ok. 20 tys. znaków = ~5 tys. tokenów)
     if len(combined_text) > 20000:
         combined_text = combined_text[:20000]
 
     prompt = (
-        f"You are a teacher. Based on the following course content, create a multiple-choice quiz with EXACTLY {amount} questions.\n"
-        f"Difficulty level: {level}\n"
-        f"Question types/styles: {types_str}\n"
+        f"You are an experienced teacher creating educational H5P content in Polish.\n"
+        f"Based on the following course content, create EXACTLY {amount} H5P learning items.\n"
+        f"Difficulty: {level}\n"
         f"Thematic focus: {focus_str}\n"
         f"Additional instructions: {instructions}\n\n"
-        "Return ONLY a valid JSON array where each object has the following keys:\n"
-        "- 'question' (string): the question text.\n"
-        "- 'options' (array of strings): exactly 4 possible answers.\n"
-        "- 'correctIndex' (integer): the 0-based index of the correct answer in the 'options' array.\n"
-        "- 'tip' (string): an optional short tip for the question.\n"
-        "- 'feedback' (string): an explanation of why the correct answer is correct.\n\n"
-        "Do not wrap the response in markdown blocks. Just output raw JSON.\n\n"
+        f"IMPORTANT – you must generate items ONLY of these types (use the exact JSON format shown):\n"
+        f"{schema_prompt}\n\n"
+        f"Rules:\n"
+        f"- Spread items evenly across the requested types.\n"
+        f"- All text must be in POLISH.\n"
+        f"- Return ONLY a raw JSON array (no markdown fences, no extra text).\n"
+        f"- For 'multichoice' correctIndex must point to the truly correct answer.\n"
+        f"- For 'dragtext' wrap exactly 1 or 2 key words per sentence with *asterisks*. DO NOT use any HTML tags like <p> in the text.\n\n"
         f"Course content:\n{combined_text}"
     )
 
     result_text = "[]"
-    
-    if api_type == 'openai' and api_key:
+
+    if api_type == "openai" and api_key:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
             resp = client.chat.completions.create(
-                model='gpt-4o',
-                messages=[{'role': 'user', 'content': prompt}],
-                temperature=0.7
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.6,
             )
             result_text = resp.choices[0].message.content.strip()
+            print("[H5P] OpenAI OK")
         except Exception as e:
-            print(f"[!] OpenAI H5P Generation error: {e}")
+            print(f"[H5P] OpenAI error: {e}")
 
-    elif api_type == 'gemini' and api_key:
+    elif api_type == "gemini" and api_key:
+        import time
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
-            resp = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            result_text = resp.text.strip()
+            gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+            for model in gemini_models:
+                for attempt in range(3):
+                    try:
+                        resp = client.models.generate_content(model=model, contents=prompt)
+                        result_text = resp.text.strip()
+                        print(f"[H5P] Gemini OK ({model})")
+                        break
+                    except Exception as e:
+                        err = str(e)
+                        if any(kw in err.upper() for kw in ["503", "UNAVAILABLE", "OVERLOADED", "RATE"]):
+                            wait = 5 * (attempt + 1)
+                            print(f"[H5P] Gemini {model} overloaded, retry in {wait}s... ({err[:80]})")
+                            time.sleep(wait)
+                        else:
+                            print(f"[H5P] Gemini {model} error: {err[:120]}")
+                            break
+                if result_text != "[]":
+                    break
+            if result_text == "[]":
+                print("[H5P] All Gemini models failed")
         except Exception as e:
-            print(f"[!] Gemini H5P Generation error: {e}")
+            print(f"[H5P] Gemini init error: {e}")
 
-    elif api_type == 'openrouter' and api_key:
+    elif api_type == "openrouter" and api_key:
         try:
             from openai import OpenAI
             client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-            
             free_models = [
                 "google/gemini-2.5-flash:free",
-                "openrouter/free",
-                "openai/gpt-oss-20b:free"
+                "openai/gpt-4o-mini",
+                "openai/gpt-oss-20b:free",
             ]
-            
             for model in free_models:
                 try:
                     resp = client.chat.completions.create(
                         model=model,
-                        messages=[{'role': 'user', 'content': prompt}],
-                        temperature=0.7,
-                        extra_headers={"HTTP-Referer": "https://moodle.agent.local", "X-Title": "Moodle Translator Agent"}
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.6,
+                        extra_headers={
+                            "HTTP-Referer": "https://moodle.agent.local",
+                            "X-Title": "Moodle AI Agent",
+                        },
                     )
                     if resp.choices and resp.choices[0].message.content:
                         result_text = resp.choices[0].message.content.strip()
-                        print(f"  [✓] OpenRouter H5P OK ({model})")
+                        print(f"[H5P] OpenRouter OK ({model})")
                         break
                 except Exception as e:
-                    print(f"  [!] OpenRouter H5P fail ({model}): {str(e)[:100]}")
-                    continue
+                    print(f"[H5P] OpenRouter fail ({model}): {str(e)[:120]}")
         except Exception as e:
-            print(f"[!] OpenRouter H5P Generation error: {e}")
-    else:
-        # Mock / Fallback
-        return [
-            {
-                "question": "Przykładowe pytanie wygenerowane (brak klucza API/AI)?",
-                "options": ["Odpowiedź A", "Odpowiedź B", "Odpowiedź C", "Odpowiedź D"],
-                "correctIndex": 0,
-                "tip": "To jest podpowiedź mockowa.",
-                "feedback": "Odpowiedź A jest prawidłowa, ponieważ to mock."
-            }
-        ]
+            print(f"[H5P] OpenRouter init error: {e}")
 
-    # Clean up markdown JSON wrappers if LLM still added them
-    if result_text.startswith("```json"):
-        result_text = result_text[7:]
-    if result_text.startswith("```"):
-        result_text = result_text[3:]
-    if result_text.endswith("```"):
-        result_text = result_text[:-3]
+    else:
+        # Mock / brak API
+        print("[H5P] No API key – returning mock data")
+        return _mock_data(types)
+
+    # --- oczyszczanie odpowiedzi z ewentualnych markdownów ---
+    result_text = re.sub(r"^```(?:json)?", "", result_text, flags=re.MULTILINE).strip()
+    result_text = re.sub(r"```$", "", result_text, flags=re.MULTILINE).strip()
 
     try:
-        questions = json.loads(result_text.strip())
-        if not isinstance(questions, list):
-            questions = []
-        return questions
+        items = json.loads(result_text)
+        if not isinstance(items, list):
+            print("[H5P] LLM returned non-list JSON – falling back to mock")
+            return _mock_data(types)
+        print(f"[H5P] Parsed {len(items)} items from LLM")
+        return items
     except json.JSONDecodeError as e:
-        print(f"[!] Failed to parse H5P JSON: {e}")
+        print(f"[H5P] JSON parse error: {e}\nRaw response:\n{result_text[:500]}")
         return []
 
-def create_h5p_archive(questions, output_path: str, title="Wygenerowany Quiz H5P"):
+
+def _mock_data(types):
+    items = []
+    if "Quiz (ABCD)" in types or not types:
+        items.append({
+            "type": "multichoice",
+            "question": "Przykładowe pytanie testowe (tryb bez API)?",
+            "options": ["Odpowiedź A", "Odpowiedź B", "Odpowiedź C", "Odpowiedź D"],
+            "correctIndex": 0,
+            "tip": "To podpowiedź demonstracyjna.",
+            "feedback": "Odpowiedź A jest poprawna w trybie demonstracyjnym.",
+        })
+    if "Fiszki" in types:
+        items.append({"type": "dialogcard", "front": "Fiszka demonstracyjna", "back": "Definicja demonstracyjna"})
+    if "Uzupełnianie luk" in types:
+        items.append({"type": "dragtext", "text": "Moodle jest przykładowym *systemem LMS*."})
+    if "Prawda / Fałsz" in types:
+        items.append({"type": "truefalse", "question": "Ziemia krąży wokół Słońca.", "correctAnswer": True,
+                      "tip": "Wskazówka: astronomia.", "feedback": "Tak, Ziemia obraca się wokół Słońca."})
+    return items
+
+
+# ── Archive builder ────────────────────────────────────────────────────────────
+
+def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
     """
-    Create a .h5p ZIP archive containing h5p.json and content/content.json
-    for a Question Set.
+    Buduje plik .h5p z listy itemów zwróconych przez LLM.
+
+    Strategia:
+    - Tylko dialogcards → mainLibrary = H5P.Dialogcards (najprostszy, najbardziej kompatybilny)
+    - Tylko jeden typ quiz/dragtext/truefalse → mainLibrary = H5P.QuestionSet
+    - Mieszane → mainLibrary = H5P.Column
     """
-    # Build content.json for H5P.QuestionSet
-    h5p_questions = []
-    for q in questions:
-        answers = []
-        for idx, opt in enumerate(q.get("options", [])):
-            is_correct = (idx == q.get("correctIndex", 0))
-            answers.append({
-                "text": f"<div>{opt}</div>",
-                "correct": is_correct,
-                "tipsAndFeedback": {
-                    "tip": q.get("tip", "") if is_correct else "",
-                    "chosenFeedback": f"<div>{q.get('feedback', '')}</div>" if is_correct else f"<div>Niepoprawnie. {q.get('feedback', '')}</div>",
-                    "notChosenFeedback": ""
-                }
+    dialogs   = []
+    qs_items  = []   # MultiChoice, TrueFalse
+    drag_items = []  # DragText (osobne, bo nie idzie do QuestionSet poprawnie)
+
+    for item in items:
+        t = item.get("type", "multichoice")
+
+        if t == "dialogcard":
+            dialogs.append({
+                "text":   f"<p>{item.get('front', '')}</p>",
+                "answer": f"<p>{item.get('back', '')}</p>",
             })
-            
-        h5p_questions.append({
-            "library": "H5P.MultiChoice 1.16",
-            "params": {
-                "question": f"<p>{q.get('question', '')}</p>",
-                "answers": answers,
-                "behaviour": {
-                    "enableRetry": True,
-                    "enableSolutionsButton": True,
-                    "singlePoint": False,
-                    "randomAnswers": True,
-                    "showSolutionsRequiresInput": True,
-                    "type": "auto",
-                    "confirmCheckDialog": False,
-                    "confirmRetryDialog": False,
-                    "autoCheck": False,
-                    "passPercentage": 100,
-                    "showScorePoint": True
+
+        elif t == "dragtext":
+            raw_text = item.get("text", "")
+            # Usuń HTML jeśli LLM owinął tekst w tagi
+            raw_text = re.sub(r"<[^>]+>", " ", raw_text).strip()
+            # Pomijaj elementy bez słów w gwiazdkach (błędnie wygenerowane)
+            if not raw_text or not re.search(r"\*[^*]+\*", raw_text):
+                print(f"[H5P] Skipping invalid dragtext (no asterisked words): {raw_text[:60]!r}")
+                continue
+            drag_items.append({
+                "library": "H5P.DragText 1.10",
+                "subContentId": str(uuid.uuid4()),
+                "metadata": {"title": "Uzupełnianie luk", "license": "U"},
+                "params": {
+                    "taskDescription": "<p>Przeciągnij słowa w odpowiednie miejsca.</p>",
+                    "textField": f"<p>{raw_text}</p>",
+                    "behaviour": {
+                        "enableRetry": True,
+                        "enableSolutionsButton": True,
+                        "instantFeedback": False,
+                    },
+                    "checkAnswer": "Sprawdź",
+                    "tryAgain": "Spróbuj ponownie",
+                    "showSolution": "Pokaż rozwiązanie",
                 },
-                "UI": {
-                    "checkAnswerButton": "Sprawdź",
-                    "showSolutionButton": "Pokaż rozwiązanie",
-                    "tryAgainButton": "Spróbuj ponownie",
-                    "tipsLabel": "Podpowiedź",
-                    "scoreBarLabel": "Otrzymałeś :num punktów z :total możliwych",
-                    "tipAvailable": "Dostępna podpowiedź",
-                    "feedbackAvailable": "Dostępna informacja zwrotna",
-                    "readFeedback": "Przeczytaj informację zwrotną",
-                    "wrongAnswer": "Błędna odpowiedź",
-                    "correctAnswer": "Prawidłowa odpowiedź",
-                    "shouldCheck": "Należy zaznaczyć",
-                    "shouldNotCheck": "Nie należy zaznaczać",
-                    "noHint": "Brak podpowiedzi",
-                    "a11yCheck": "Sprawdź odpowiedzi. Zostaną zliczone punkty."
+            })
+
+        elif t == "truefalse":
+            correct_ans = item.get("correctAnswer", True)
+            is_true = correct_ans if isinstance(correct_ans, bool) else str(correct_ans).lower() == "true"
+            feedback_text = item.get('feedback', '')
+            qs_items.append({
+                "library": "H5P.TrueFalse 1.8",
+                "subContentId": str(uuid.uuid4()),
+                "metadata": {"title": "Prawda / Fałsz", "license": "U"},
+                "params": {
+                    "question": f"<p>{item.get('question', '')}</p>",
+                    "correct": "true" if is_true else "false",
+                    "behaviour": {"enableRetry": True, "enableSolutionsButton": True},
+                    "feedbackText": f"<p>{feedback_text}</p>" if feedback_text else "",
+                    "l10n": {"trueText": "Prawda", "falseText": "Fałsz"},
                 },
-                "media": {"disableImageZooming": False}
-            }
+            })
+
+        else:  # multichoice
+            # Pomin jeśli brak pytania lub za mało opcji
+            if not item.get("question", "").strip():
+                print("[H5P] Skipping multichoice with empty question")
+                continue
+            options = item.get("options", [])
+            if len(options) < 2:
+                print(f"[H5P] Skipping multichoice with fewer than 2 options: {item.get('question','')[:50]}")
+                continue
+            answers = []
+            feedback_text = item.get('feedback', '')
+            for idx, opt in enumerate(options):
+                is_correct = (idx == item.get("correctIndex", 0))
+                answers.append({
+                    "text": f"<div>{opt}</div>",
+                    "correct": is_correct,
+                    "tipsAndFeedback": {
+                        "tip": "",
+                        "chosenFeedback": (
+                            f"<div>✓ Poprawnie! {feedback_text}</div>" if is_correct
+                            else f"<div>✗ Niepoprawnie. {feedback_text}</div>"
+                        ),
+                        "notChosenFeedback": "",
+                    },
+                })
+            qs_items.append({
+                "library": "H5P.MultiChoice 1.16",
+                "subContentId": str(uuid.uuid4()),
+                "metadata": {"title": "Pytanie wielokrotnego wyboru", "license": "U"},
+                "params": {
+                    "question": f"<p>{item.get('question', '')}</p>",
+                    "answers": answers,
+                    "behaviour": {
+                        "enableRetry": True,
+                        "enableSolutionsButton": True,
+                        "singlePoint": False,
+                        "randomAnswers": True,
+                        "showSolutionsRequiresInput": True,
+                        "type": "auto",
+                        "confirmCheckDialog": False,
+                        "confirmRetryDialog": False,
+                        "autoCheck": False,
+                        "passPercentage": 100,
+                        "showScorePoint": True,
+                    },
+                    "UI": {
+                        "checkAnswerButton": "Sprawdź",
+                        "showSolutionButton": "Pokaż rozwiązanie",
+                        "tryAgainButton": "Spróbuj ponownie",
+                        "tipsLabel": "Podpowiedź",
+                        "scoreBarLabel": "Otrzymałeś :num punktów z :total możliwych",
+                        "tipAvailable": "Dostępna podpowiedź",
+                        "feedbackAvailable": "Dostępna informacja zwrotna",
+                        "readFeedback": "Przeczytaj informację zwrotną",
+                        "wrongAnswer": "Błędna odpowiedź",
+                        "correctAnswer": "Prawidłowa odpowiedź",
+                        "shouldCheck": "Należy zaznaczyć",
+                        "shouldNotCheck": "Nie należy zaznaczać",
+                        "noHint": "Brak podpowiedzi",
+                        "a11yCheck": "Sprawdź odpowiedzi. Zostaną zliczone punkty.",
+                    },
+                    "media": {"disableImageZooming": False},
+                },
+            })
+
+    # -----------------------------------------------------------------
+    # Wybierz strategię pakowania
+    # -----------------------------------------------------------------
+    only_dialogs   = bool(dialogs) and not qs_items and not drag_items
+    only_qs        = bool(qs_items) and not dialogs and not drag_items
+    only_drag      = bool(drag_items) and not dialogs and not qs_items
+    mixed          = not (only_dialogs or only_qs or only_drag)
+
+    if only_dialogs:
+        _build_dialogcards(dialogs, output_path, title)
+    elif only_qs:
+        # Używamy Column zamiast QuestionSet - brak problemów z pustymi przyciskami nav
+        _build_quiz_as_column(qs_items, output_path, title)
+    elif only_drag:
+        # DragText nie ma kontenera; pakujemy jako Column z pojedynczym elementem
+        _build_column([("drag", d) for d in drag_items], output_path, title)
+    else:
+        _build_column_mixed(dialogs, qs_items, drag_items, output_path, title)
+
+
+# ── builders ──────────────────────────────────────────────────────────────────
+
+def _build_quiz_as_column(qs_items, output_path, title):
+    """Pakuje pytania quizu bezpośrednio w H5P.Column.
+    
+    Każde pytanie (MultiChoice / TrueFalse) jest osobnym elementem kolumny.
+    Brak przycisków nawigacji QuestionSet (które mają problemy z CSS w Moodle).
+    Każde pytanie ma własny przycisk 'Sprawdź'.
+    """
+    column_items = []
+    for q in qs_items:
+        column_items.append({
+            "content": {
+                "library": q["library"],
+                "subContentId": q["subContentId"],
+                "metadata": q.get("metadata", {"title": "Pytanie", "license": "U"}),
+                "params": q["params"],
+            },
+            "useSeparator": "auto",
         })
 
+    content_json = {"content": column_items}
+
+    h5p_json = {
+        "title": title,
+        "language": "pl",
+        "mainLibrary": "H5P.Column",
+        "embedTypes": ["div"],
+        "license": "U",
+        "preloadedDependencies": [
+            {"machineName": "H5P.Column",      "majorVersion": 1, "minorVersion": 15},
+            {"machineName": "H5P.MultiChoice", "majorVersion": 1, "minorVersion": 16},
+            {"machineName": "H5P.TrueFalse",   "majorVersion": 1, "minorVersion": 8},
+            {"machineName": "FontAwesome",      "majorVersion": 4, "minorVersion": 5},
+            {"machineName": "H5P.JoubelUI",    "majorVersion": 1, "minorVersion": 3},
+        ],
+    }
+    _write_archive(output_path, h5p_json, content_json)
+
+
+
+def _qs_texts():
+    return {
+        "prevButton": "◀ Poprzednie",
+        "nextButton": "Następne ▶",
+        "finishButton": "Zakończ quiz",
+        "submitButton": "Zatwierdź",
+        "textualProgress": "Pytanie @current z @total",
+        "jumpToQuestion": "Pytanie %d",
+        "questionLabel": "Pytanie",
+        "readSpeakerProgress": "Pytanie @current z @total",
+        "unansweredText": "Bez odpowiedzi",
+        "answeredText": "Udzielono odpowiedzi",
+        "emptyText": "Puste",
+    }
+
+
+def _qs_end():
+    return {
+        "showResultPage": True,
+        "showSolutionButton": True,
+        "showRetryButton": True,
+        "noResultMessage": "Zakończono quiz",
+        "message": "Twój wynik to @score z @total punktów",
+        "scoreBarLabel": "Zdobyłeś :num na :total punktów",
+        "actionString": "Przejdź dalej",
+        "solutionButtonText": "Pokaż rozwiązania",
+        "retryButtonText": "Spróbuj ponownie",
+        "requiresInput": "Odpowiedz na pytania zanim sprawdzisz wynik.",
+    }
+
+
+def _build_dialogcards(dialogs, output_path, title):
+    content_json = {
+        "dialogs": dialogs,
+        "title": title,
+        "behaviour": {
+            "enableRetry": True,
+            "disableBackwardsNavigation": False,
+            "scaleTextNotCard": False,
+            "randomCards": True,
+        },
+        "l10n": {
+            "cardFront": "Przód karty",
+            "cardBack": "Tył karty",
+            "next": "Następna",
+            "prev": "Poprzednia",
+            "previous": "Poprzednia",
+            "retry": "Powtórz",
+            "answer": "Pokaż odpowiedź",
+            "goodButton": "Wiedziałem",
+            "notGoodButton": "Nie wiedziałem",
+            "round": "Runda @round",
+            "cardsLeft": "Pozostało kart: @number",
+            "nextRound": "Przejdź do rundy @round",
+            "showSummary": "Pokaż podsumowanie",
+            "summaryHeader": "Podsumowanie",
+            "summaryCardsRight": "Poprawnie oznaczone karty:",
+            "summaryCardsWrong": "Niepoprawnie oznaczone karty:",
+            "summaryCardsNotShown": "Pozostałe karty:",
+            "summaryOverallScore": "Ogólny wynik",
+            "summaryCardsCompleted": "Ukończone karty:",
+            "summaryCompletedRounds": "Ukończone rundy:",
+            "summaryAllDone": "Brawo! Wszystkie karty zaliczone!",
+        },
+        "mode": "normal",
+    }
+
+    h5p_json = {
+        "title": title,
+        "language": "pl",
+        "mainLibrary": "H5P.Dialogcards",
+        "embedTypes": ["div"],
+        "license": "U",
+        "preloadedDependencies": [
+            {"machineName": "H5P.Dialogcards", "majorVersion": 1, "minorVersion": 9},
+            {"machineName": "FontAwesome",       "majorVersion": 4, "minorVersion": 5},
+        ],
+    }
+    _write_archive(output_path, h5p_json, content_json)
+
+
+def _build_questionset(qs_items, output_path, title):
     content_json = {
         "introPage": {
             "showIntroPage": False,
-            "startButtonText": "Rozpocznij Quiz",
-            "introduction": f"<p>{title}</p>"
+            "startButtonText": "Rozpocznij",
+            "introduction": f"<p>{title}</p>",
         },
-        "progressType": "dots",
+        "progressType": "textual",
         "passPercentage": 50,
-        "questions": h5p_questions,
+        "questions": qs_items,
         "disableBackwardsNavigation": False,
         "randomQuestions": False,
-        "endGame": {
-            "showResultPage": True,
-            "showSolutionButton": True,
-            "showRetryButton": True,
-            "noResultMessage": "Zakończono quiz",
-            "message": "Twój wynik to @score z @total punktów",
-            "scoreBarLabel": "Zdobyłeś :num na :total punktów",
-            "actionString": "Przejdź dalej",
-            "solutionButtonText": "Pokaż rozwiązania",
-            "retryButtonText": "Spróbuj ponownie"
-        },
-        "override": {
-            "checkButton": True
-        },
-        "texts": {
-            "prevButton": "Poprzednie",
-            "nextButton": "Następne",
-            "finishButton": "Zakończ",
-            "submitButton": "Zatwierdź",
-            "textualProgress": "Pytanie: @current z @total",
-            "jumpToQuestion": "Pytanie %d",
-            "questionLabel": "Pytanie",
-            "readSpeakerProgress": "Pytanie @current z @total",
-            "unansweredText": "Bez odpowiedzi",
-            "answeredText": "Odpowiedziano",
-            "emptyText": "Puste"
-        }
+        "endGame": _qs_end(),
+        "override": {"checkButton": True},
+        "texts": _qs_texts(),
     }
 
     h5p_json = {
@@ -226,20 +493,122 @@ def create_h5p_archive(questions, output_path: str, title="Wygenerowany Quiz H5P
         "language": "pl",
         "mainLibrary": "H5P.QuestionSet",
         "embedTypes": ["div"],
+        "license": "U",
         "preloadedDependencies": [
-            {
-                "machineName": "H5P.QuestionSet",
-                "majorVersion": 1,
-                "minorVersion": 20
-            },
-            {
-                "machineName": "H5P.MultiChoice",
-                "majorVersion": 1,
-                "minorVersion": 16
-            }
-        ]
+            {"machineName": "H5P.QuestionSet",  "majorVersion": 1, "minorVersion": 20},
+            {"machineName": "H5P.MultiChoice",  "majorVersion": 1, "minorVersion": 16},
+            {"machineName": "H5P.TrueFalse",    "majorVersion": 1, "minorVersion": 8},
+            {"machineName": "FontAwesome",       "majorVersion": 4, "minorVersion": 5},
+            {"machineName": "H5P.JoubelUI",     "majorVersion": 1, "minorVersion": 3},
+        ],
     }
+    _write_archive(output_path, h5p_json, content_json)
 
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        zipf.writestr("h5p.json", json.dumps(h5p_json, ensure_ascii=False, indent=2))
-        zipf.writestr("content/content.json", json.dumps(content_json, ensure_ascii=False, indent=2))
+
+def _build_column_mixed(dialogs, qs_items, drag_items, output_path, title):
+    """Pakuje mieszane typy w H5P.Column."""
+    column_items = []
+
+    if dialogs:
+        column_items.append({
+            "content": {
+                "library": "H5P.Dialogcards 1.9",
+                "subContentId": str(uuid.uuid4()),
+                "metadata": {"title": "Fiszki", "license": "U"},
+                "params": {
+                    "dialogs": dialogs,
+                    "title": "Fiszki edukacyjne",
+                    "mode": "normal",
+                    "behaviour": {
+                        "enableRetry": True,
+                        "disableBackwardsNavigation": False,
+                        "scaleTextNotCard": False,
+                        "randomCards": True,
+                    },
+                },
+            },
+            "useSeparator": "auto",
+        })
+
+    if qs_items:
+        # Pytania quizu bezpośrednio w Column - bez QuestionSet i bez pustych przycisków nav
+        for q in qs_items:
+            column_items.append({
+                "content": {
+                    "library": q["library"],
+                    "subContentId": q["subContentId"],
+                    "metadata": q.get("metadata", {"title": "Pytanie", "license": "U"}),
+                    "params": q["params"],
+                },
+                "useSeparator": "auto",
+            })
+
+    for drag in drag_items:
+        column_items.append({
+            "content": {
+                "library": drag["library"],
+                "subContentId": drag["subContentId"],
+                "metadata": drag.get("metadata", {"title": "Uzupełnianie luk", "license": "U"}),
+                "params": drag["params"],
+            },
+            "useSeparator": "auto",
+        })
+
+    content_json = {"content": column_items}
+
+    h5p_json = {
+        "title": title,
+        "language": "pl",
+        "mainLibrary": "H5P.Column",
+        "embedTypes": ["div"],
+        "license": "U",
+        "preloadedDependencies": [
+            {"machineName": "H5P.Column",       "majorVersion": 1, "minorVersion": 15},
+            {"machineName": "H5P.Dialogcards",  "majorVersion": 1, "minorVersion": 9},
+            {"machineName": "H5P.QuestionSet",  "majorVersion": 1, "minorVersion": 20},
+            {"machineName": "H5P.MultiChoice",  "majorVersion": 1, "minorVersion": 16},
+            {"machineName": "H5P.TrueFalse",    "majorVersion": 1, "minorVersion": 8},
+            {"machineName": "H5P.DragText",     "majorVersion": 1, "minorVersion": 10},
+            {"machineName": "FontAwesome",       "majorVersion": 4, "minorVersion": 5},
+            {"machineName": "H5P.JoubelUI",     "majorVersion": 1, "minorVersion": 3},
+        ],
+    }
+    _write_archive(output_path, h5p_json, content_json)
+
+
+def _build_column(drag_list, output_path, title):
+    """Tylko DragText – pakujemy w Column."""
+    column_items = []
+    for _, drag in drag_list:
+        column_items.append({
+            "content": {
+                "library": drag["library"],
+                "subContentId": drag["subContentId"],
+                "metadata": drag.get("metadata", {"title": "Uzupełnianie luk", "license": "U"}),
+                "params": drag["params"],
+            },
+            "useSeparator": "auto",
+        })
+
+    content_json = {"content": column_items}
+
+    h5p_json = {
+        "title": title,
+        "language": "pl",
+        "mainLibrary": "H5P.Column",
+        "embedTypes": ["div"],
+        "license": "U",
+        "preloadedDependencies": [
+            {"machineName": "H5P.Column",   "majorVersion": 1, "minorVersion": 15},
+            {"machineName": "H5P.DragText", "majorVersion": 1, "minorVersion": 10},
+            {"machineName": "FontAwesome",   "majorVersion": 4, "minorVersion": 5},
+        ],
+    }
+    _write_archive(output_path, h5p_json, content_json)
+
+
+def _write_archive(output_path, h5p_json, content_json):
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.writestr("h5p.json",              json.dumps(h5p_json,     ensure_ascii=False, indent=2))
+        zipf.writestr("content/content.json",  json.dumps(content_json, ensure_ascii=False, indent=2))
+    print(f"[H5P] Archive written -> {output_path}")
