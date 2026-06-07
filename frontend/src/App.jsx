@@ -90,12 +90,28 @@ const App = () => {
     target_langs: ['en', 'pl'],
     api_type: 'none',
     api_key: '',
+    translate: true,
+    generate_h5p: false,
+    h5p_types: ['Quiz (ABCD)'],
+    h5p_level: 'Mieszany (auto)',
+    h5p_amount: 5,
+    h5p_focus: [],
+    h5p_instructions: '',
   });
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [user, setUser] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const fileInputRef = useRef(null);
   const dropdownRef = useRef(null);
+
+  const toggleH5pType = (val) => setConfig(p => ({
+    ...p, h5p_types: p.h5p_types.includes(val) ? p.h5p_types.filter(t => t !== val) : [...p.h5p_types, val]
+  }));
+
+  const toggleH5pFocus = (val) => setConfig(p => ({
+    ...p, h5p_focus: p.h5p_focus.includes(val) ? p.h5p_focus.filter(t => t !== val) : [...p.h5p_focus, val]
+  }));
+
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -180,11 +196,17 @@ const App = () => {
     setIsSubmitting(true);
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('translate', true);
+    fd.append('translate', config.translate);
+    fd.append('generate_h5p', config.generate_h5p);
     fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs.join(','));
     fd.append('api_type', config.api_type);
     if (config.api_key) fd.append('api_key', config.api_key);
+    fd.append('h5p_types', config.h5p_types.join(','));
+    fd.append('h5p_level', config.h5p_level);
+    fd.append('h5p_amount', config.h5p_amount);
+    fd.append('h5p_focus', config.h5p_focus.join(','));
+    fd.append('h5p_instructions', config.h5p_instructions);
     try {
       await api.post('/tasks', fd);
       setFile(null);
@@ -247,6 +269,27 @@ const App = () => {
     }
   };
 
+  const handleDownloadH5p = async (task, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const response = await api.get(`/download-h5p/${task.id}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `h5p_${task.original_filename.replace('.mbz', '.h5p')}`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download H5P error:', err);
+      alert('Nie udało się pobrać pliku H5P.');
+    }
+  };
+
   // ── helpers ─────────────────────────────────────────────────────────────
   const toggleExpand = (id) => setExpanded(p => ({ ...p, [id]: !p[id] }));
 
@@ -261,11 +304,13 @@ const App = () => {
 
   const runHint = !file
     ? 'Wybierz plik aby kontynuować'
-    : config.target_langs.length === 0
-      ? 'Wybierz co najmniej jeden język docelowy'
-      : '';
+    : (!config.translate && !config.generate_h5p)
+      ? 'Wybierz co najmniej jeden agent'
+      : (config.translate && config.target_langs.length === 0)
+        ? 'Wybierz co najmniej jeden język docelowy'
+        : '';
 
-  const canRun = !!file && config.target_langs.length > 0 && !isSubmitting;
+  const canRun = !!file && (config.translate || config.generate_h5p) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
@@ -354,7 +399,7 @@ const App = () => {
           )}
         </div>
 
-        {/* Krok 2: Tłumaczenie */}
+        {/* Krok 2: Opcje tłumaczenia */}
         <div className="sidebar-section">
           <div
             className="sidebar-section-header active"
@@ -397,7 +442,105 @@ const App = () => {
                     ))}
                   </div>
                 </div>
+
+                <div className="field">
+                  <label>Opcje dodatkowe</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.translate}
+                      onChange={e => setConfig({ ...config, translate: e.target.checked })}
+                    />
+                    Tłumacz kurs na inne języki
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.generate_h5p}
+                      onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
+                    />
+                    Generuj treści H5P
+                  </label>
+                </div>
               </div>
+
+              {config.generate_h5p && (
+                <div className="agent-config-section">
+                  <div className="agent-config-label">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8M12 17v4" />
+                    </svg>
+                    Opcje treści H5P
+                  </div>
+
+                  <div className="field">
+                    <label>Format zawartości</label>
+                    <div className="tag-group">
+                      {['Quiz (ABCD)', 'Fiszki', 'Uzupełnianie luk', 'Prawda / Fałsz'].map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item lg ${config.h5p_types.includes(tag) ? 'active' : ''}`}
+                          onClick={() => toggleH5pType(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Poziom trudności</label>
+                    <select
+                      value={config.h5p_level}
+                      onChange={e => setConfig({ ...config, h5p_level: e.target.value })}
+                    >
+                      <option value="Mieszany (auto)">Mieszany (auto)</option>
+                      <option value="Łatwy">Łatwy</option>
+                      <option value="Średni">Średni</option>
+                      <option value="Trudny">Trudny</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Obszar tematyczny <span style={{fontSize:'11px', opacity: 0.5, fontWeight: 400}}>(opcjonalnie – zostaw puste = mieszany)</span></label>
+                    <div className="tag-group focus-group">
+                      {['Pojęcia kluczowe', 'Definicje i terminy', 'Przykłady praktyczne', 'Zastosowania', 'Porównania', 'Podsumowanie'].map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item lg ${config.h5p_focus.includes(tag) ? 'active' : ''}`}
+                          onClick={() => toggleH5pFocus(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Liczba elementów</label>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <div className="number-stepper">
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.max(1, p.h5p_amount - 1) }))}>−</button>
+                        <input className="stepper-val" type="number" value={config.h5p_amount} readOnly />
+                        <button className="stepper-btn" onClick={() => setConfig(p => ({ ...p, h5p_amount: Math.min(30, p.h5p_amount + 1) }))}>+</button>
+                      </div>
+                      <span className="stepper-hint">elementów (1–30)</span>
+                    </div>
+                  </div>
+
+
+
+                  <div className="field">
+                    <label>Dodatkowe instrukcje dla AI</label>
+                    <textarea
+                      placeholder="np. Skup się na zastosowaniach praktycznych. Używaj przykładów w Pythonie. Unikaj teorii formalnej..."
+                      value={config.h5p_instructions}
+                      onChange={e => setConfig({ ...config, h5p_instructions: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -556,6 +699,16 @@ const App = () => {
                       )}
                       {task.status === 'completed' && (
                         <div style={{ display: 'flex', gap: '8px' }}>
+                          {task.h5p_filename && (
+                            <button
+                              className="btn-dl"
+                              onClick={e => handleDownloadH5p(task, e)}
+                              style={{ background: 'var(--primary)', borderColor: 'var(--primary)', color: '#fff' }}
+                              title="Pobierz wygenerowane treści H5P"
+                            >
+                              <IconDl /> Treści H5P
+                            </button>
+                          )}
                           <button
                             className="btn-dl"
                             onClick={e => handleDownloadTexts(task, e)}

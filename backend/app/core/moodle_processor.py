@@ -620,6 +620,68 @@ class MoodleMBZProcessor:
         self._extract_mode_set = None
         return extracted_texts
 
+    def extract_source_texts(self, input_mbz: str) -> list:
+        """
+        Prosta ekstrakcja tekstu z kursu MBZ dla potrzeb H5P – bez tłumaczenia.
+        Zwraca listę unikalnych, niepustych tekstów ze wszystkich plików XML.
+        """
+        texts = set()
+        tag_re = re.compile(
+            r'<(?:' + '|'.join(CONTENT_TAGS) + r')(?:\s+[^>]*)?>(<!\[CDATA\[(.*?)\]\]>|(.*?))</(?:'
+            + '|'.join(CONTENT_TAGS) + r')>',
+            re.DOTALL
+        )
+
+        def _pull_texts(xml_content: str):
+            for m in tag_re.finditer(xml_content):
+                # CDATA
+                cdata = m.group(2)
+                plain = m.group(3)
+                raw = cdata if cdata is not None else plain
+                if not raw:
+                    continue
+                raw = raw.strip()
+                if not raw or not self._is_translatable(raw):
+                    continue
+                # Wyciągnij tekst ze znaczników {mlang}
+                mlang_src = re.search(
+                    rf'\{{mlang {re.escape(self.source_lang)}\}}(.*?)\{{mlang\}}',
+                    raw, re.DOTALL
+                )
+                if mlang_src:
+                    t = mlang_src.group(1).strip()
+                else:
+                    # Usuń wszystkie tagi HTML, zostaw sam tekst
+                    t = re.sub(r'<[^>]+>', ' ', raw).strip()
+                if t and len(t) > 5:
+                    texts.add(t)
+
+        try:
+            if input_mbz.lower().endswith('.zip'):
+                with zipfile.ZipFile(input_mbz, 'r') as zf:
+                    for info in zf.infolist():
+                        if self._should_process(info.filename):
+                            try:
+                                _pull_texts(zf.read(info.filename).decode('utf-8', errors='replace'))
+                            except Exception:
+                                pass
+            else:
+                with tarfile.open(input_mbz, 'r:gz') as tf:
+                    for member in tf:
+                        if member.isfile() and self._should_process(member.name):
+                            try:
+                                fh = tf.extractfile(member)
+                                if fh:
+                                    _pull_texts(fh.read().decode('utf-8', errors='replace'))
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f"[H5P extract] Error reading MBZ: {e}")
+
+        result = list(texts)
+        print(f"[H5P extract] Found {len(result)} unique source text fragments")
+        return result
+
     def process_xml_bytes(self, content_bytes: bytes, name: str) -> bytes:
         """
         Translate XML content given as bytes.
@@ -643,7 +705,7 @@ class MoodleMBZProcessor:
             return content.encode('utf-8')
         return content_bytes
 
-    def process_mbz(self, input_mbz: str, output_mbz: str, task_id: str = None):
+    def process_mbz(self, input_mbz: str, output_mbz: str, task_id: str = None) -> set:
         """
         Stream through the archive, modifying XML byte content in-place.
 
@@ -711,6 +773,8 @@ class MoodleMBZProcessor:
             
         if self.progress_callback:
             self.progress_callback(100, "Zakończono przetwarzanie.")
+            
+        return global_extract_set
 
     def _process_tar(self, input_mbz: str, output_mbz: str):
         processed = 0

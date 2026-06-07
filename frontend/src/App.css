@@ -248,7 +248,8 @@ body {
 .field select,
 .field input[type="password"],
 .field input[type="email"],
-.field input[type="text"] {
+.field input[type="text"],
+.field textarea {
   width: 100%;
   background: var(--raised);
   border: 1px solid var(--border);
@@ -261,8 +262,14 @@ body {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
+.field textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
 .field select:focus,
-.field input:focus {
+.field input:focus,
+.field textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px rgba(139, 0, 2, 0.18);
 }
@@ -322,6 +329,72 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
+}
+
+/* ── Stepper ── */
+.number-stepper {
+  display: flex;
+  align-items: center;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  height: 36px;
+}
+
+.stepper-btn {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  width: 36px;
+  height: 100%;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-family: inherit;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepper-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--primary);
+}
+
+.stepper-val {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  color: var(--text);
+  width: 50px;
+  height: 100%;
+  text-align: center;
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  outline: none;
+  appearance: none;
+}
+
+.stepper-val::-webkit-inner-spin-button,
+.stepper-val::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.stepper-hint {
+  margin-left: 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.tag-item.lg {
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  border-radius: 5px;
 }
 
 /* ── Submit ── */
