@@ -88,16 +88,19 @@ const App = () => {
   const [config, setConfig] = useState({
     source_lang: 'en',
     target_langs: ['en', 'pl'],
-    api_type: 'none',
+    api_type: 'openrouter',
     api_key: '',
     translate: true,
     generate_h5p: false,
+    check_links: false,
     h5p_types: ['Quiz (ABCD)'],
     h5p_level: 'Mieszany (auto)',
     h5p_amount: 5,
     h5p_focus: [],
     h5p_instructions: '',
   });
+  const [linksReports, setLinksReports] = useState({});
+  const [expandedLinksReport, setExpandedLinksReport] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [user, setUser] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -135,6 +138,46 @@ const App = () => {
       setUser(null);
     }
   }, [isAuthenticated]);
+
+  const fetchLinksReport = async (taskId) => {
+    if (expandedLinksReport === taskId) {
+      setExpandedLinksReport(null);
+      return;
+    }
+    if (linksReports[taskId]) {
+      setExpandedLinksReport(taskId);
+      return;
+    }
+    try {
+      const res = await api.get(`/tasks/${taskId}/links`);
+      setLinksReports(p => ({ ...p, [taskId]: res.data }));
+      setExpandedLinksReport(taskId);
+    } catch (err) {
+      console.error('Failed to fetch links report:', err);
+      alert('Nie udało się pobrać raportu linków.');
+    }
+  };
+
+  const handleDownloadLinks = async (task, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const response = await api.get(`/tasks/${task.id}/links`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `links_${task.original_filename.replace('.mbz', '')}.json`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download links error:', err);
+      alert('Nie udało się pobrać raportu linków JSON.');
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -198,6 +241,7 @@ const App = () => {
     fd.append('file', file);
     fd.append('translate', config.translate);
     fd.append('generate_h5p', config.generate_h5p);
+    fd.append('check_links', config.check_links);
     fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs.join(','));
     fd.append('api_type', config.api_type);
@@ -304,13 +348,13 @@ const App = () => {
 
   const runHint = !file
     ? 'Wybierz plik aby kontynuować'
-    : (!config.translate && !config.generate_h5p)
+    : (!config.translate && !config.generate_h5p && !config.check_links)
       ? 'Wybierz co najmniej jeden agent'
       : (config.translate && config.target_langs.length === 0)
         ? 'Wybierz co najmniej jeden język docelowy'
         : '';
 
-  const canRun = !!file && (config.translate || config.generate_h5p) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
+  const canRun = !!file && (config.translate || config.generate_h5p || config.check_links) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
@@ -411,37 +455,41 @@ const App = () => {
           {!collapsedSections[2] && (
             <div className="sidebar-section-body">
               <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
-                <div className="agent-config-label">
-                  <IconGlobe />
-                  Konfiguracja języków
-                </div>
+                {config.translate && (
+                  <>
+                    <div className="agent-config-label">
+                      <IconGlobe />
+                      Konfiguracja języków
+                    </div>
 
-                <div className="field">
-                  <label>Język źródłowy</label>
-                  <select
-                    value={config.source_lang}
-                    onChange={e => setConfig({ ...config, source_lang: e.target.value })}
-                  >
-                    {LANGUAGES.map(l => (
-                      <option key={l.code} value={l.code}>{l.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="field">
-                  <label>Języki docelowe</label>
-                  <div className="tag-group lang-group">
-                    {TARGET_LANG_TAGS.map(tag => (
-                      <span
-                        key={tag}
-                        className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
-                        onClick={() => toggleTargetLang(tag)}
+                    <div className="field">
+                      <label>Język źródłowy</label>
+                      <select
+                        value={config.source_lang}
+                        onChange={e => setConfig({ ...config, source_lang: e.target.value })}
                       >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                        {LANGUAGES.map(l => (
+                          <option key={l.code} value={l.code}>{l.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="field">
+                      <label>Języki docelowe</label>
+                      <div className="tag-group lang-group">
+                        {TARGET_LANG_TAGS.map(tag => (
+                          <span
+                            key={tag}
+                            className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
+                            onClick={() => toggleTargetLang(tag)}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div className="field">
                   <label>Opcje dodatkowe</label>
@@ -453,13 +501,21 @@ const App = () => {
                     />
                     Tłumacz kurs na inne języki
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
                     <input
                       type="checkbox"
                       checked={config.generate_h5p}
                       onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
                     />
                     Generuj treści H5P
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={config.check_links}
+                      onChange={e => setConfig({ ...config, check_links: e.target.checked })}
+                    />
+                    Weryfikuj linki i generuj raport
                   </label>
                 </div>
               </div>
@@ -545,45 +601,7 @@ const App = () => {
           )}
         </div>
 
-        {/* Krok 3: Silnik AI */}
-        <div className="sidebar-section">
-          <div
-            className="sidebar-section-header active"
-            onClick={() => toggleSection(3)}
-          >
-            <span className="step-num">3</span>
-            Silnik AI
-          </div>
-          {!collapsedSections[3] && (
-            <div className="sidebar-section-body">
-              <div className="field">
-                <label>Silnik tłumaczenia</label>
-                <select
-                  value={config.api_type}
-                  onChange={e => setConfig({ ...config, api_type: e.target.value })}
-                >
-                  <option value="none">Mock (bez AI)</option>
-                  <option value="openai">OpenAI GPT-4o</option>
-                  <option value="deepl">DeepL</option>
-                  <option value="gemini">Gemini AI Studio</option>
-                  <option value="openrouter">OpenRouter (Auto Free Tier)</option>
-                </select>
-              </div>
-
-              {config.api_type !== 'none' && (
-                <div className="field">
-                  <label>Klucz API</label>
-                  <input
-                    type="password"
-                    value={config.api_key}
-                    onChange={e => setConfig({ ...config, api_key: e.target.value })}
-                    placeholder="sk-..."
-                  />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {/* Silnik AI is managed via server env key */}
 
         {/* Footer */}
         <div className="sidebar-footer">
@@ -698,7 +716,35 @@ const App = () => {
                         <span className="badge-cancelled">Anulowano</span>
                       )}
                       {task.status === 'completed' && (
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          {task.has_links_report && (
+                            <button
+                              className="btn-dl"
+                              onClick={e => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                fetchLinksReport(task.id);
+                              }}
+                              style={{ background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', borderColor: '#2a5298', color: '#fff' }}
+                              title="Pokaż interaktywny raport z weryfikacji linków"
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '4px' }}>
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                              </svg>
+                              {expandedLinksReport === task.id ? 'Ukryj linki' : 'Raport linków'}
+                            </button>
+                          )}
+                          {task.has_links_report && (
+                            <button
+                              className="btn-dl"
+                              onClick={e => handleDownloadLinks(task, e)}
+                              style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
+                              title="Pobierz raport weryfikacji linków w formacie JSON"
+                            >
+                              <IconDl /> Raport (JSON)
+                            </button>
+                          )}
                           {task.h5p_filename && (
                             <button
                               className="btn-dl"
@@ -709,23 +755,27 @@ const App = () => {
                               <IconDl /> Treści H5P
                             </button>
                           )}
-                          <button
-                            className="btn-dl"
-                            onClick={e => handleDownloadTexts(task, e)}
-                            style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
-                            title="Pobierz wyekstrahowane i przetłumaczone teksty w formacie JSON"
-                          >
-                            <IconDl /> Teksty (JSON)
-                          </button>
-                          <button
-                            className="btn-dl"
-                            onClick={e => handleDownload(task, e)}
-                          >
-                            <IconDl /> Pobierz MBZ
-                          </button>
+                          {task.config?.translate && (
+                            <>
+                              <button
+                                className="btn-dl"
+                                onClick={e => handleDownloadTexts(task, e)}
+                                style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
+                                title="Pobierz wyekstrahowane i przetłumaczone teksty w formacie JSON"
+                              >
+                                <IconDl /> Teksty (JSON)
+                              </button>
+                              <button
+                                className="btn-dl"
+                                onClick={e => handleDownload(task, e)}
+                              >
+                                <IconDl /> Pobierz MBZ
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
-                      {task.subtasks?.length > 0 && (
+                      {(task.subtasks?.length > 0 || task.has_links_report) && (
                         <span className="expand-arrow"><IconDown /></span>
                       )}
                     </div>
@@ -749,6 +799,95 @@ const App = () => {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {/* Links Report Interactive View */}
+                  {isExpanded && expandedLinksReport === task.id && linksReports[task.id] && (
+                    <div className="links-report-container" onClick={e => e.stopPropagation()} style={{ display: 'block', margin: '12px 16px 16px' }}>
+                      <div className="links-report-header">
+                        <div className="links-report-title">Weryfikacja Linków Zewnętrznych</div>
+                        <div className="links-report-summary-stats">
+                          <span className="stat-badge total">Wszystkie: <strong>{linksReports[task.id].summary.total}</strong></span>
+                          <span className="stat-badge active">Aktywne: <strong>{linksReports[task.id].summary.active}</strong></span>
+                          <span className="stat-badge broken">Nieaktywne: <strong>{linksReports[task.id].summary.broken}</strong></span>
+                        </div>
+                      </div>
+                      
+                      {linksReports[task.id].links.length === 0 ? (
+                        <div className="links-report-empty">Nie wykryto żadnych linków zewnętrznych w tym kursie.</div>
+                      ) : (
+                        <div className="links-table-wrapper">
+                          <table className="links-report-table">
+                            <thead>
+                              <tr>
+                                <th>Adres URL</th>
+                                <th>Lokalizacja w kursie</th>
+                                <th>Status</th>
+                                <th>Sugestia AI (Rozwiązanie)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {linksReports[task.id].links.map((link, idx) => (
+                                <tr key={idx} className={link.is_active ? "row-active" : "row-broken"}>
+                                  <td className="url-cell" title={link.url}>
+                                    {link.is_active ? (
+                                      <a href={link.url} target="_blank" rel="noopener noreferrer" className="external-link-anchor">
+                                        {link.url}
+                                      </a>
+                                    ) : (
+                                      <span style={{ color: 'var(--text-muted)', textDecoration: 'line-through', opacity: 0.6 }}>
+                                        {link.url}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="context-cell">
+                                    {link.context}
+                                  </td>
+                                  <td className="status-cell">
+                                    {link.is_active ? (
+                                      <span className="link-badge ok">Aktywny</span>
+                                    ) : (
+                                      <span className="link-badge fail" title={link.error || "Błąd połączenia"}>
+                                        Nieaktywny
+                                        {link.error && (
+                                          <div style={{ fontSize: '0.68rem', opacity: 0.85, marginTop: '3px', fontWeight: 'normal', whiteSpace: 'pre-wrap' }}>
+                                            {link.error}
+                                          </div>
+                                        )}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="suggestion-cell">
+                                    {link.is_active ? (
+                                      <span className="no-suggestion">—</span>
+                                    ) : (
+                                      <div className="suggestion-box">
+                                        <div className="suggested-url-wrapper">
+                                          <a href={link.suggested_url} target="_blank" rel="noopener noreferrer" className="suggested-url-link">
+                                            {link.suggested_url}
+                                          </a>
+                                          <button 
+                                            className="btn-copy-url" 
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(link.suggested_url);
+                                              alert("Skopiowano link do schowka!");
+                                            }}
+                                            title="Skopiuj sugerowany URL"
+                                          >
+                                            Kopiuj
+                                          </button>
+                                        </div>
+                                        <div className="suggestion-reason">{link.reason}</div>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
