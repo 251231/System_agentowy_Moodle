@@ -928,3 +928,234 @@ body {
 .user-dropdown-item:hover svg {
   color: #fff;
 }
+
+/* ── Links Report Interactive Dashboard ── */
+.links-report-container {
+  margin-top: 14px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.links-report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.links-report-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+
+.links-report-summary-stats {
+  display: flex;
+  gap: 10px;
+}
+
+.stat-badge {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+
+.stat-badge.total {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+}
+
+.stat-badge.active {
+  background: rgba(46, 204, 113, 0.1);
+  color: #2ecc71;
+  border-color: rgba(46, 204, 113, 0.2);
+}
+
+.stat-badge.broken {
+  background: rgba(231, 76, 60, 0.1);
+  color: #e74c3c;
+  border-color: rgba(231, 76, 60, 0.2);
+}
+
+.links-report-empty {
+  text-align: center;
+  padding: 20px;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+
+.links-table-wrapper {
+  overflow-x: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.links-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.82rem;
+}
+
+.links-report-table th {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--dim);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-hi);
+}
+
+.links-report-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.links-report-table tr:last-child td {
+  border-bottom: none;
+}
+
+.links-report-table tr.row-broken {
+  background: rgba(231, 76, 60, 0.01);
+}
+
+.links-report-table tr.row-broken:hover {
+  background: rgba(231, 76, 60, 0.03);
+}
+
+.links-report-table tr.row-active:hover {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.url-cell {
+  max-width: 250px;
+  word-break: break-all;
+}
+
+.external-link-anchor {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.external-link-anchor:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.context-cell {
+  color: var(--muted);
+}
+
+.file-tag {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--dim);
+  font-family: monospace;
+  margin-top: 3px;
+}
+
+.status-cell {
+  white-space: nowrap;
+}
+
+.link-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.link-badge.ok {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  border: 1px solid rgba(46, 204, 113, 0.25);
+}
+
+.link-badge.fail {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  border: 1px solid rgba(231, 76, 60, 0.25);
+  cursor: help;
+}
+
+.suggestion-cell {
+  min-width: 260px;
+}
+
+.no-suggestion {
+  color: var(--dim);
+}
+
+.suggestion-box {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.suggested-url-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.suggested-url-link {
+  color: #3498db;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+.suggested-url-link:hover {
+  text-decoration: underline;
+}
+
+.btn-copy-url {
+  background: var(--raised);
+  border: 1px solid var(--border-hi);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-copy-url:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.suggestion-reason {
+  font-size: 0.72rem;
+  color: var(--dim);
+  line-height: 1.3;
+}
