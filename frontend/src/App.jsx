@@ -697,7 +697,21 @@ const App = () => {
                     <div className="task-info">
                       <div className="task-name">{task.original_filename}</div>
                       <div className="task-meta">
-                        <span className="task-agent-tag">Tłumaczenie</span>
+                        {(() => {
+                          const isTranslate = task.config?.translate === true || task.config?.translate === 'true';
+                          const isH5p = task.config?.generate_h5p === true || task.config?.generate_h5p === 'true';
+                          const isLinks = task.config?.check_links === true || task.config?.check_links === 'true';
+                          const hasAny = isTranslate || isH5p || isLinks;
+                          
+                          return (
+                            <>
+                              {isTranslate && <span className="task-agent-tag">Tłumaczenie</span>}
+                              {isH5p && <span className="task-agent-tag">H5P</span>}
+                              {isLinks && <span className="task-agent-tag">Linki</span>}
+                              {!hasAny && <span className="task-agent-tag">Tłumaczenie</span>}
+                            </>
+                          );
+                        })()}
                         <span style={{ fontSize: '0.62rem', color: 'var(--dim)', fontFamily: 'monospace' }}>
                           #{task.id.split('-')[0]}
                         </span>
@@ -738,6 +752,9 @@ const App = () => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 fetchLinksReport(task.id);
+                                if (expandedLinksReport !== task.id) {
+                                  setExpanded(p => ({ ...p, [task.id]: true }));
+                                }
                               }}
                               style={{ background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', borderColor: '#2a5298', color: '#fff' }}
                               title="Pokaż interaktywny raport z weryfikacji linków"
