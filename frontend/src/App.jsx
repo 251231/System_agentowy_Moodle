@@ -65,6 +65,20 @@ const IconGlobe = () => (
   </svg>
 );
 
+const IconCards = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="2" y="3" width="20" height="14" rx="2" />
+    <path d="M8 21h8M12 17v4" />
+  </svg>
+);
+
+const IconLink = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </svg>
+);
+
 // ── Language options matching what the backend supports ──────────────────
 const LANGUAGES = [
   { code: 'pl', label: 'Polski (PL)' },
@@ -443,90 +457,78 @@ const App = () => {
           )}
         </div>
 
-        {/* Krok 2: Opcje tłumaczenia */}
+        {/* Krok 2: Wybierz agenty */}
         <div className="sidebar-section">
           <div
             className="sidebar-section-header active"
             onClick={() => toggleSection(2)}
           >
             <span className="step-num">2</span>
-            Opcje tłumaczenia
+            Wybierz agenty
           </div>
           {!collapsedSections[2] && (
             <div className="sidebar-section-body">
-              <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
-                {config.translate && (
-                  <>
-                    <div className="agent-config-label">
-                      <IconGlobe />
-                      Konfiguracja języków
-                    </div>
-
-                    <div className="field">
-                      <label>Język źródłowy</label>
-                      <select
-                        value={config.source_lang}
-                        onChange={e => setConfig({ ...config, source_lang: e.target.value })}
-                      >
-                        {LANGUAGES.map(l => (
-                          <option key={l.code} value={l.code}>{l.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="field">
-                      <label>Języki docelowe</label>
-                      <div className="tag-group lang-group">
-                        {TARGET_LANG_TAGS.map(tag => (
-                          <span
-                            key={tag}
-                            className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
-                            onClick={() => toggleTargetLang(tag)}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <div className="field">
-                  <label>Opcje dodatkowe</label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.translate}
-                      onChange={e => setConfig({ ...config, translate: e.target.checked })}
-                    />
-                    Tłumacz kurs na inne języki
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem', marginBottom: '8px' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.generate_h5p}
-                      onChange={e => setConfig({ ...config, generate_h5p: e.target.checked })}
-                    />
-                    Generuj treści H5P
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)', textTransform: 'none', fontWeight: 400, fontSize: '0.8rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={config.check_links}
-                      onChange={e => setConfig({ ...config, check_links: e.target.checked })}
-                    />
-                    Weryfikuj linki i generuj raport
-                  </label>
-                </div>
+              <div className="agent-tabs">
+                <button 
+                  className={`agent-tab ${config.translate ? 'active' : ''}`}
+                  onClick={() => setConfig(p => ({ ...p, translate: !p.translate }))}
+                >
+                  <IconGlobe /> Tłumaczenie
+                </button>
+                <button 
+                  className={`agent-tab ${config.generate_h5p ? 'active' : ''}`}
+                  onClick={() => setConfig(p => ({ ...p, generate_h5p: !p.generate_h5p }))}
+                >
+                  <IconCards /> Materiały H5P
+                </button>
+                <button 
+                  className={`agent-tab ${config.check_links ? 'active' : ''}`}
+                  onClick={() => setConfig(p => ({ ...p, check_links: !p.check_links }))}
+                >
+                  <IconLink /> Linki
+                </button>
               </div>
+
+              {config.translate && (
+                <div className="agent-config-section" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
+                  <div className="agent-config-label">
+                    <IconGlobe />
+                    Konfiguracja języków
+                  </div>
+
+                  <div className="field">
+                    <label>Język źródłowy</label>
+                    <select
+                      value={config.source_lang}
+                      onChange={e => setConfig({ ...config, source_lang: e.target.value })}
+                    >
+                      {LANGUAGES.map(l => (
+                        <option key={l.code} value={l.code}>{l.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Języki docelowe</label>
+                    <div className="tag-group lang-group">
+                      {TARGET_LANG_TAGS.map(tag => (
+                        <span
+                          key={tag}
+                          className={`tag-item${config.target_langs.includes(tag.toLowerCase()) ? ' active' : ''}`}
+                          onClick={() => toggleTargetLang(tag)}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {config.generate_h5p && (
                 <div className="agent-config-section">
                   <div className="agent-config-label">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="2" y="3" width="20" height="14" rx="2" />
-                      <path d="M8 21h8M12 17v4" />
-                    </svg>
+                    <IconCards />
                     Opcje treści H5P
                   </div>
 
@@ -594,6 +596,18 @@ const App = () => {
                       value={config.h5p_instructions}
                       onChange={e => setConfig({ ...config, h5p_instructions: e.target.value })}
                     />
+                  </div>
+                </div>
+              )}
+
+              {config.check_links && (
+                <div className="agent-config-section">
+                  <div className="agent-config-label">
+                    <IconLink />
+                    Weryfikacja linków
+                  </div>
+                  <div className="field">
+                    <span style={{fontSize: '0.8rem', color: 'var(--muted)'}}>Automatyczna weryfikacja wszystkich odnośników w kursie pod kątem ich poprawności. Raport zostanie udostępniony po zakończeniu analizy.</span>
                   </div>
                 </div>
               )}
@@ -683,7 +697,21 @@ const App = () => {
                     <div className="task-info">
                       <div className="task-name">{task.original_filename}</div>
                       <div className="task-meta">
-                        <span className="task-agent-tag">Tłumaczenie</span>
+                        {(() => {
+                          const isTranslate = task.config?.translate === true || task.config?.translate === 'true';
+                          const isH5p = task.config?.generate_h5p === true || task.config?.generate_h5p === 'true';
+                          const isLinks = task.config?.check_links === true || task.config?.check_links === 'true';
+                          const hasAny = isTranslate || isH5p || isLinks;
+                          
+                          return (
+                            <>
+                              {isTranslate && <span className="task-agent-tag">Tłumaczenie</span>}
+                              {isH5p && <span className="task-agent-tag">H5P</span>}
+                              {isLinks && <span className="task-agent-tag">Linki</span>}
+                              {!hasAny && <span className="task-agent-tag">Tłumaczenie</span>}
+                            </>
+                          );
+                        })()}
                         <span style={{ fontSize: '0.62rem', color: 'var(--dim)', fontFamily: 'monospace' }}>
                           #{task.id.split('-')[0]}
                         </span>
@@ -724,6 +752,9 @@ const App = () => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 fetchLinksReport(task.id);
+                                if (expandedLinksReport !== task.id) {
+                                  setExpanded(p => ({ ...p, [task.id]: true }));
+                                }
                               }}
                               style={{ background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)', borderColor: '#2a5298', color: '#fff' }}
                               title="Pokaż interaktywny raport z weryfikacji linków"

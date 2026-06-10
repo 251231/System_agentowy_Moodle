@@ -375,12 +375,14 @@ body {
   font-size: 0.95rem;
   font-weight: 700;
   outline: none;
-  appearance: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
 
 .stepper-val::-webkit-inner-spin-button,
 .stepper-val::-webkit-outer-spin-button {
   -webkit-appearance: none;
+  display: none;
   margin: 0;
 }
 
@@ -1158,4 +1160,41 @@ body {
   font-size: 0.72rem;
   color: var(--dim);
   line-height: 1.3;
+}
+
+/* ── Agent Tabs ── */
+.agent-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.agent-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 10px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-family: 'Titillium Web', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.agent-tab:hover {
+  background: #303030;
+  color: var(--text);
+}
+
+.agent-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
 }

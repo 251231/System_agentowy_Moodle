@@ -44,7 +44,12 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         task.status = "processing"
         db.commit()
         
-        _set_subtask(db, task_id, "Translation Processor", "processing")
+        is_translate = config.get("translate") in (True, "true", "True", "1")
+        is_h5p = config.get("generate_h5p") in (True, "true", "True", "1")
+        is_links = config.get("check_links") in (True, "true", "True", "1")
+
+        if is_translate:
+            _set_subtask(db, task_id, "Translation Processor", "processing")
 
         def check_cancel():
             db_s = SessionLocal()
@@ -78,12 +83,12 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         )
         
         extract_set = None
-        if config.get("translate"):
+        if is_translate:
             extract_set = processor.process_mbz(input_path, output_path, task_id=task_id)
         else:
             # If translation is off, just copy the file over
             shutil.copy2(input_path, output_path)
-            if config.get("generate_h5p"):
+            if is_h5p:
                 # Skanuj kurs aby wydobyć teksty do H5P
                 _set_subtask(db, task_id, "H5P Generator", "processing", "Wydobywanie tekstów z kursu...")
                 source_texts = processor.extract_source_texts(input_path)
@@ -91,12 +96,10 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
                 extract_set = set((t, config.get("source_lang", "en")) for t in source_texts)
                 print(f"[H5P] Scan: {len(source_texts)} unique texts extracted from MBZ")
 
-        if config.get("translate"):
+        if is_translate:
             _set_subtask(db, task_id, "Translation Processor", "completed", "Tłumaczenie ukończone.")
-        else:
-            _set_subtask(db, task_id, "Translation Processor", "completed", "Tłumaczenie wyłączone.")
 
-        if config.get("generate_h5p"):
+        if is_h5p:
             _set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie treści H5P...")
             try:
                 from app.core.h5p_generator import generate_h5p_quiz_json, create_h5p_archive
@@ -131,7 +134,7 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
             except Exception as e:
                 _set_subtask(db, task_id, "H5P Generator", "failed", f"Błąd: {str(e)}")
 
-        if config.get("check_links"):
+        if is_links:
             _set_subtask(db, task_id, "Link Checker", "processing", "Inicjalizacja weryfikacji linków...")
             try:
                 from app.core.link_checker import MoodleLinkChecker
@@ -253,6 +256,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
             "progress":          t.progress,
             "h5p_filename":      t.h5p_filename,
             "has_links_report":  has_links_report,
+            "config":            t.config,
             "created_at":        t.created_at.isoformat() if t.created_at else None,
             "subtasks": [
                 {"agent": s.agent_name, "status": s.status, "log": s.log}
@@ -275,6 +279,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
         "progress":          t.progress,
         "h5p_filename":      t.h5p_filename,
         "has_links_report":  has_links_report,
+        "config":            t.config,
         "subtasks": [
             {"agent": s.agent_name, "status": s.status, "log": s.log}
             for s in t.subtasks
