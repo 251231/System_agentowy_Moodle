@@ -8,6 +8,7 @@ import tarfile
 import zipfile
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.db.database import SessionLocal
@@ -156,18 +157,16 @@ class MoodleLinkChecker:
         
         self._log(f"Weryfikacja zakończona: {active_count} aktywnych, {len(broken_links)} nieaktywnych.")
         
-        if broken_links and self.api_key:
-            self._log(f"Pobieranie sugestii AI dla {len(broken_links)} niedziałających linków...")
+        if broken_links:
+            self._log(f"Generowanie sugestii dla {len(broken_links)} niedziałających linków...")
             for idx, item in enumerate(broken_links):
-                self._log(f"Generowanie sugestii AI ({idx + 1}/{len(broken_links)})...")
-                suggestion = self._get_ai_suggestion(item["url"], item["context"])
+                self._log(f"Przetwarzanie sugestii ({idx + 1}/{len(broken_links)})...")
+                llm_context = item["context"]
+                if item.get("anchor_text"):
+                    llm_context = f"{item['context']} (Tekst linku: \"{item['anchor_text']}\")"
+                suggestion = self._get_smart_suggestion(item["url"], llm_context)
                 item["suggested_url"] = suggestion.get("suggested_url", "")
                 item["reason"] = suggestion.get("reason", "Brak szczegółowego uzasadnienia.")
-        else:
-            for item in broken_links:
-                domain_q = get_clean_search_phrase(item["url"]) or item["context"]
-                item["suggested_url"] = f"https://www.google.com/search?q={urllib.parse.quote(domain_q)}"
-                item["reason"] = "Brak klucza API. Kliknij, aby wyszukać tę witrynę w Google."
 
         # 4. Save report
         report = {
@@ -280,12 +279,40 @@ class MoodleLinkChecker:
             if not context or context == "Nieznana aktywność":
                 context = "Ogólny kurs"
             
-            # Find URLs
+            # 1. Search for HTML anchor tags to find URLs with their specific anchor texts
+            anchor_pattern = re.compile(
+                r'<a\s+[^>]*href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>',
+                re.DOTALL | re.IGNORECASE
+            )
+            anchors = anchor_pattern.findall(content_clean)
+            for url, anchor_text in anchors:
+                url = url.rstrip('.,;:)!?>}"\'')
+                if any(kw in url for kw in ["localhost", "127.0.0.1", "@@PLUGINFILE@@", "$@NULL@$"]):
+                    continue
+                if len(url) < 12:
+                    continue
+                
+                # Clean up anchor text
+                clean_anchor = re.sub(r'<[^>]+>', ' ', anchor_text)
+                clean_anchor = html.unescape(clean_anchor)
+                clean_anchor = re.sub(r'\s+', ' ', clean_anchor).strip()
+                
+                # Use anchor text if it is descriptive (not empty, not just a URL)
+                if not clean_anchor or clean_anchor.startswith("http://") or clean_anchor.startswith("https://") or len(clean_anchor) < 2:
+                    clean_anchor = None
+                
+                if url not in links_map:
+                    links_map[url] = {
+                        "url": url,
+                        "context": context,
+                        "anchor_text": clean_anchor,
+                        "file": Path(filename).name
+                    }
+            
+            # 2. Find any other raw URLs that were not in anchor tags
             urls = URL_PATTERN.findall(content_clean)
             for url in urls:
-                # Clean up trailing punctuation
                 url = url.rstrip('.,;:)!?>}"\'')
-                # Skip internal Moodle or local system URLs
                 if any(kw in url for kw in ["localhost", "127.0.0.1", "@@PLUGINFILE@@", "$@NULL@$"]):
                     continue
                 if len(url) < 12:
@@ -376,6 +403,7 @@ class MoodleLinkChecker:
         return {
             "url": url,
             "context": item["context"],
+            "anchor_text": item.get("anchor_text"),
             "file": item["file"],
             "is_active": is_active,
             "status_code": status_code,
@@ -400,6 +428,7 @@ class MoodleLinkChecker:
                     results.append({
                         "url": item["url"],
                         "context": item["context"],
+                        "anchor_text": item.get("anchor_text"),
                         "file": item["file"],
                         "is_active": False,
                         "status_code": None,
@@ -413,6 +442,61 @@ class MoodleLinkChecker:
                     
         return results
 
+    def _get_smart_suggestion(self, dead_url: str, context: str) -> dict:
+        """
+        Coordinates suggestions by prioritizing OpenRouter LLM (if API key is present),
+        and falls back to a clean Google search URL.
+        """
+        # 1. Try to generate suggestion via OpenRouter LLM if API key is present
+        if self.api_key:
+            try:
+                ai_suggestion = self._get_ai_suggestion(dead_url, context)
+                if ai_suggestion and "google.com/search" not in ai_suggestion.get("suggested_url", ""):
+                    return ai_suggestion
+            except Exception as e:
+                print(f"[Link Checker] Error getting AI suggestion: {e}")
+
+        # 2. Fallback to Google Search if LLM failed, wasn't available, or couldn't find a match
+        domain_q = get_clean_search_phrase(dead_url) or context
+        reason = "Kliknij, aby wyszukać tę witrynę w Google."
+        if not self.api_key:
+            reason = "Brak klucza API. Kliknij, aby wyszukać tę witrynę w Google."
+        return {
+            "suggested_url": f"https://www.google.com/search?q={urllib.parse.quote(domain_q)}",
+            "reason": reason
+        }
+
+    def _search_web_for_alternatives(self, query: str) -> list[str]:
+        """
+        Queries DuckDuckGo HTML search interface and parses the first few organic links
+        to serve as real-world reference links for the LLM.
+        """
+        if not query or len(query.strip()) < 2:
+            return []
+            
+        url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({'q': query})
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=6, context=self.ssl_context) as response:
+                html_content = response.read().decode('utf-8', errors='replace')
+                urls = re.findall(r'href="([^"]+)"', html_content)
+                external_urls = []
+                for u in urls:
+                    if "/l/?kh=" in u or "uddg=" in u:
+                        match = re.search(r'uddg=([^&]+)', u)
+                        if match:
+                            u = urllib.parse.unquote(match.group(1))
+                    if u.startswith("http") and "duckduckgo.com" not in u:
+                        if u not in external_urls:
+                            external_urls.append(u)
+                return external_urls[:6]
+        except Exception as e:
+            print(f"[Link Checker] Web search failed for query '{query}': {e}")
+            return []
+
     def _get_ai_suggestion(self, dead_url: str, context: str) -> dict:
         """
         Uses OpenRouter to recommend a working alternative link.
@@ -420,19 +504,40 @@ class MoodleLinkChecker:
         clean_domain = get_clean_search_phrase(dead_url) or context
         google_fallback = f"https://www.google.com/search?q={urllib.parse.quote(clean_domain)}"
 
+        # Dynamically query DDG search to find real, active, related links on the fly!
+        search_query = get_clean_search_phrase(dead_url)
+        if not search_query or len(search_query.strip()) < 3:
+            search_query = context
+            
+        search_results = self._search_web_for_alternatives(search_query)
+        search_info = ""
+        if search_results:
+            search_info = "Wyniki wyszukiwania w sieci dla tej witryny/tematu:\n"
+            for r_url in search_results:
+                search_info += f"- {r_url}\n"
+            search_info += "\nMOŻESZ wybrać jeden z powyższych działających adresów URL jako sugerowany zamiennik (suggested_url), jeśli pasuje do kontekstu.\n\n"
+
         prompt = (
-            f"Jesteś specjalistą ds. jakości kursów e-learningowych.\n"
-            f"Wykryto niedziałający link w kursie: {dead_url}\n"
-            f"Lokalizacja w strukturze kursu (jako kontekst): {context}\n\n"
-            f"Zadanie:\n"
-            f"Zaproponuj jedną działającą i bezpieczną stronę internetową, która jest bezpośrednim odpowiednikiem lub bardzo podobną stroną "
-            f"do tej niedziałającej (bazuj przede wszystkim na adresie URL {dead_url} i jego domenie, a nie na ogólnym temacie sekcji/kursu).\n\n"
-            f"Jeśli nie jesteś w stanie znaleźć lub nie znasz konkretnej, działającej alternatywy dla tej domeny, "
-            f"jako 'suggested_url' podaj dokładnie ten link wyszukiwania Google:\n"
+            f"Jesteś zaawansowanym asystentem ds. weryfikacji i kuracji linków internetowych w kursach edukacyjnych.\n"
+            f"Twoim zadaniem jest znalezienie najlepszego, działającego zamiennika dla uszkodzonego (martwego) odnośnika.\n\n"
+            f"Dane wejściowe:\n"
+            f"- Niedziałający link: {dead_url}\n"
+            f"- Kontekst wystąpienia (miejsce w kursie, nazwa zasobu lub tekst linku): {context}\n\n"
+            f"{search_info}"
+            f"Instrukcje wyboru zamiennika (dla dowolnego tematu z całego internetu):\n"
+            f"1. DIRECT EQUIVALENT: Najpierw spróbuj znaleźć bezpośredni, działający odpowiednik tej samej strony lub serwisu. "
+            f"Jeśli to oficjalna usługa, marka lub powszechne narzędzie, podaj jej aktualny i poprawny adres URL (np. oficjalną stronę główną lub aktualną stronę dokumentacji).\n"
+            f"2. CATEGORY MATCH: Jeśli dana strona, firma lub specyficzny artykuł już nie istnieją, zaproponuj wiodący, stabilny i powszechnie uznawany portal, "
+            f"agregator, encyklopedię lub oficjalną bazę wiedzy z tej samej dziedziny (np. dla niedziałających linków branżowych, naukowych, technologicznych, hobbystycznych czy lokalnych usług, "
+            f"zasugeruj największy powiązany portal tematyczny lub oficjalny katalog).\n"
+            f"3. STRICT SAFEGUARDS AGAINST HALLUCINATIONS:\n"
+            f"   - Podawaj wyłącznie w 100% pewne, powszechnie znane i istniejące domeny.\n"
+            f"   - Nigdy nie zmyślaj (nie halucynuj) ścieżek URL ani podstron. Jeśli sugerujesz zamiennik, użyj bezpiecznej i działającej strony głównej danej usługi/portalu, chyba że masz absolutną pewność co do poprawności pełnej ścieżki.\n"
+            f"4. FALLBACK: Jeśli nie znasz bezpiecznej i wiarygodnej alternatywy, lub temat jest zbyt niszowy/niejednoznaczny, podaj dokładnie ten link do wyszukiwarki Google:\n"
             f"{google_fallback}\n\n"
-            f"Zwróć odpowiedź wyłącznie jako poprawny format JSON (bez bloków markdown ```json ... ```) z kluczami:\n"
-            f"- \"suggested_url\": \"<pełny, działający adres URL alternatywnej strony lub powyższy link Google>\"\n"
-            f"- \"reason\": \"<krótkie, 1-2 zdaniowe uzasadnienie po polsku, dlaczego ten link pasuje, lub informacja o braku pewnej alternatywy i odesłaniu do Google>\"\n"
+            f"Zwróć odpowiedź wyłącznie jako poprawny format JSON (bez bloków markdown ```json ... ```) zawierający kluczowe pola:\n"
+            f"- \"suggested_url\": \"<pełny, działający i bezpieczny adres URL zamiennika lub powyższy link Google>\"\n"
+            f"- \"reason\": \"<krótkie, 1-2 zdaniowe uzasadnienie po polsku, wyjaśniające dlaczego ten link pasuje tematycznie/funkcjonalnie jako zamiennik, lub informacja o odesłaniu do Google z powodu braku pewnej alternatywy>\"\n"
         )
 
         free_models = [
