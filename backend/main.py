@@ -21,6 +21,12 @@ if "tasks" in inspector.get_table_names():
             conn.execute(text("ALTER TABLE tasks ADD COLUMN owner_id VARCHAR REFERENCES users(id)"))
         if 'progress' not in columns:
             conn.execute(text("ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0"))
+        if 'result_filename' not in columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN result_filename VARCHAR"))
+        if 'h5p_filename' not in columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN h5p_filename VARCHAR"))
+        if 'config' not in columns:
+            conn.execute(text("ALTER TABLE tasks ADD COLUMN config JSON DEFAULT '{}'::json"))
 
 app = FastAPI(title="Moodle Agent System")
 

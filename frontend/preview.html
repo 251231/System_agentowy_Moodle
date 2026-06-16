@@ -1410,26 +1410,26 @@
             </div>
 
             <div class="field">
-              <label>Liczba fiszek na moduł</label>
+              <label>Liczba elementów</label>
               <div style="display:flex;align-items:center;">
                 <div class="number-stepper">
                   <button class="stepper-btn" onclick="stepperChange(-1)">−</button>
                   <input class="stepper-val" type="number" id="stepper-val" value="5" min="1" max="30" readonly />
                   <button class="stepper-btn" onclick="stepperChange(1)">+</button>
                 </div>
-                <span class="stepper-hint">fiszek / moduł (1–30)</span>
+                <span class="stepper-hint">elementów (1–30)</span>
               </div>
             </div>
 
             <div class="field">
-              <label>Obszary tematyczne</label>
+              <label>Obszar tematyczny <span style="font-size:11px; opacity:0.5; font-weight:400;">(opcjonalnie – zostaw puste = mieszany)</span></label>
               <div class="tag-group focus-group">
-                <span class="tag-item active" onclick="this.classList.toggle('active')">Pojęcia kluczowe</span>
-                <span class="tag-item active" onclick="this.classList.toggle('active')">Definicje</span>
-                <span class="tag-item" onclick="this.classList.toggle('active')">Algorytmy</span>
-                <span class="tag-item" onclick="this.classList.toggle('active')">Wzory</span>
-                <span class="tag-item" onclick="this.classList.toggle('active')">Przykłady kodu</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Pojęcia kluczowe</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Definicje i terminy</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Przykłady praktyczne</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Zastosowania</span>
                 <span class="tag-item" onclick="this.classList.toggle('active')">Porównania</span>
+                <span class="tag-item" onclick="this.classList.toggle('active')">Podsumowanie</span>
               </div>
             </div>
 
