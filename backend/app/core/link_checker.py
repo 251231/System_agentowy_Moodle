@@ -306,7 +306,8 @@ class MoodleLinkChecker:
                         "url": url,
                         "context": context,
                         "anchor_text": clean_anchor,
-                        "file": Path(filename).name
+                        "file": Path(filename).name,
+                        "archive_path": filename
                     }
             
             # 2. Find any other raw URLs that were not in anchor tags
@@ -322,7 +323,8 @@ class MoodleLinkChecker:
                     links_map[url] = {
                         "url": url,
                         "context": context,
-                        "file": Path(filename).name
+                        "file": Path(filename).name,
+                        "archive_path": filename
                     }
 
         try:
@@ -405,6 +407,7 @@ class MoodleLinkChecker:
             "context": item["context"],
             "anchor_text": item.get("anchor_text"),
             "file": item["file"],
+            "archive_path": item.get("archive_path", ""),
             "is_active": is_active,
             "status_code": status_code,
             "error": error_msg if not is_active else None
