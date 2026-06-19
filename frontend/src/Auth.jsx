@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api';
 
-export default function Auth({ onLoginSuccess }) {
+export default function Auth({ onLoginSuccess, onBack }) {
   const [isLogin, setIsLogin] = useState(true);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [email, setEmail] = useState('');

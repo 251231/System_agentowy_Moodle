@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import api from './api';
 import Auth from './Auth';
 import ResetPassword from './ResetPassword';
+import LandingPage from './LandingPage';
 import './App.css';
 
 // test deploy
@@ -461,6 +462,16 @@ const App = () => {
 
   const canRun = !!file && (config.translate || config.generate_h5p || config.check_links || config.extract_texts) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
+  const [showAuth, setShowAuth] = useState(window.location.hash === '#login');
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setShowAuth(window.location.hash === '#login');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
       setResetToken(null);
@@ -469,7 +480,22 @@ const App = () => {
   }
 
   if (!isAuthenticated) {
-    return <Auth onLoginSuccess={() => setIsAuthenticated(true)} />;
+    if (showAuth) {
+      return <Auth 
+        onLoginSuccess={() => {
+          window.location.hash = '';
+          setIsAuthenticated(true);
+        }} 
+        onBack={() => {
+          if (window.history.state !== null || window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.hash = '';
+          }
+        }} 
+      />;
+    }
+    return <LandingPage onLoginClick={() => window.location.hash = '#login'} />;
   }
 
   // ── render ───────────────────────────────────────────────────────────────
