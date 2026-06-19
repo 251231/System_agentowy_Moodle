@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import shutil
 import datetime
 from pathlib import Path
@@ -47,9 +49,12 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         is_translate = config.get("translate") in (True, "true", "True", "1")
         is_h5p = config.get("generate_h5p") in (True, "true", "True", "1")
         is_links = config.get("check_links") in (True, "true", "True", "1")
+        is_extract_texts = config.get("extract_texts") in (True, "true", "True", "1")
 
         if is_translate:
             _set_subtask(db, task_id, "Translation Processor", "processing")
+        if is_extract_texts:
+            _set_subtask(db, task_id, "Text Extractor", "processing")
 
         def check_cancel():
             db_s = SessionLocal()
@@ -88,12 +93,42 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
         else:
             # If translation is off, just copy the file over
             shutil.copy2(input_path, output_path)
+            if is_extract_texts:
+                _set_subtask(db, task_id, "Text Extractor", "processing", "Wydobywanie tekstów z kursu...")
+                try:
+                    import html as _html
+                    global_extract_set = processor._scan_and_extract_all(input_path)
+                    raw_texts = set(text for text, lang in global_extract_set)
+                    
+                    cleaned_texts = []
+                    for t in raw_texts:
+                        # Strip HTML tags
+                        clean = re.sub(r'<[^>]+>', ' ', t)
+                        # Unescape entities
+                        clean = _html.unescape(clean)
+                        # Normalize whitespaces
+                        clean = re.sub(r'\s+', ' ', clean).strip()
+                        if clean:
+                            cleaned_texts.append(clean)
+                            
+                    source_texts = sorted(list(set(cleaned_texts)))
+                    export_data = [{"original": t} for t in source_texts]
+                    export_path = UPLOAD_DIR / f"texts_{task_id}.json"
+                    with open(export_path, "w", encoding="utf-8") as f:
+                        json.dump(export_data, f, ensure_ascii=False, indent=2)
+                    _set_subtask(db, task_id, "Text Extractor", "completed", f"Wyodrębniono {len(source_texts)} unikalnych tekstów.")
+                    extract_set = global_extract_set
+                except Exception as e:
+                    _set_subtask(db, task_id, "Text Extractor", "failed", f"Błąd: {str(e)}")
+
             if is_h5p:
                 # Skanuj kurs aby wydobyć teksty do H5P
                 _set_subtask(db, task_id, "H5P Generator", "processing", "Wydobywanie tekstów z kursu...")
-                source_texts = processor.extract_source_texts(input_path)
-                # Tworzymy fake extract_set kompatybilny z dalszym kodem
-                extract_set = set((t, config.get("source_lang", "en")) for t in source_texts)
+                if extract_set:
+                    source_texts = list(set(text for text, lang in extract_set))
+                else:
+                    source_texts = processor.extract_source_texts(input_path)
+                    extract_set = set((t, config.get("source_lang", "en")) for t in source_texts)
                 print(f"[H5P] Scan: {len(source_texts)} unique texts extracted from MBZ")
 
         if is_translate:
@@ -156,7 +191,24 @@ def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict)
                 )
                 links_report_path = UPLOAD_DIR / f"links_{task_id}.json"
                 checker.scan_and_verify(input_path, str(links_report_path))
-                _set_subtask(db, task_id, "Link Checker", "completed", "Weryfikacja linków zakończona sukcesem.")
+                
+                # Check if there are any broken links in the newly generated report
+                broken_count = 0
+                if links_report_path.exists():
+                    try:
+                        with open(links_report_path, "r", encoding="utf-8") as f:
+                            report = json.load(f)
+                        broken_count = report.get("summary", {}).get("broken", 0)
+                    except Exception:
+                        pass
+                
+                if broken_count == 0:
+                    cfg = dict(task.config or {})
+                    cfg["links_approved"] = True
+                    task.config = cfg
+                    db.commit()
+
+                _set_subtask(db, task_id, "Link Checker", "completed", f"Weryfikacja linków zakończona sukcesem. Wykryto {broken_count} nieaktywnych linków.")
             except Exception as e:
                 _set_subtask(db, task_id, "Link Checker", "failed", f"Błąd: {str(e)}")
 
@@ -191,6 +243,7 @@ async def create_task(
     translate:     bool = Form(False),
     generate_h5p:  bool = Form(False),
     check_links:   bool = Form(False),
+    extract_texts: bool = Form(False),
     source_lang:   str  = Form("en"),
     target_langs:  str  = Form("en,pl"),
     api_type:      str  = Form("none"),
@@ -207,6 +260,7 @@ async def create_task(
         "translate":     translate,
         "generate_h5p":  generate_h5p,
         "check_links":   check_links,
+        "extract_texts": extract_texts,
         "source_lang":   source_lang,
         "target_langs":  [l.strip() for l in target_langs.split(",")],
         "api_type":      api_type,
@@ -249,6 +303,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
     result = []
     for t in tasks:
         has_links_report = (UPLOAD_DIR / f"links_{t.id}.json").exists()
+        has_texts_report = (UPLOAD_DIR / f"texts_{t.id}.json").exists()
         result.append({
             "id":                t.id,
             "original_filename": t.original_filename,
@@ -256,6 +311,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
             "progress":          t.progress,
             "h5p_filename":      t.h5p_filename,
             "has_links_report":  has_links_report,
+            "has_texts_report":  has_texts_report,
             "config":            t.config,
             "created_at":        t.created_at.isoformat() if t.created_at else None,
             "subtasks": [
@@ -272,6 +328,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
     if not t:
         return {"status": "not_found"}
     has_links_report = (UPLOAD_DIR / f"links_{task_id}.json").exists()
+    has_texts_report = (UPLOAD_DIR / f"texts_{task_id}.json").exists()
     return {
         "id":                t.id,
         "original_filename": t.original_filename,
@@ -279,6 +336,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
         "progress":          t.progress,
         "h5p_filename":      t.h5p_filename,
         "has_links_report":  has_links_report,
+        "has_texts_report":  has_texts_report,
         "config":            t.config,
         "subtasks": [
             {"agent": s.agent_name, "status": s.status, "log": s.log}
@@ -362,3 +420,189 @@ def download_h5p(task_id: str, db: Session = Depends(get_db), current_user: User
         filename=f"h5p_{t.original_filename.replace('.mbz', '.h5p')}",
         media_type="application/zip",
     )
+
+
+from pydantic import BaseModel
+from typing import List
+
+class LinkReplacement(BaseModel):
+    url: str
+    suggested_url: str
+    archive_path: str
+
+class ReplaceLinksRequest(BaseModel):
+    replacements: List[LinkReplacement]
+
+def _replace_links_in_archive(archive_path: str, replacements: list) -> int:
+    by_file = {}
+    for r in replacements:
+        ap = r["archive_path"]
+        if ap not in by_file:
+            by_file[ap] = []
+        by_file[ap].append(r)
+        
+    temp_out = archive_path + ".tmp"
+    processed = 0
+    
+    import copy
+    import io
+    import html as _html
+    import shutil
+    import os
+    
+    if archive_path.lower().endswith('.zip'):
+        import zipfile
+        with zipfile.ZipFile(archive_path, 'r') as zip_in, \
+             zipfile.ZipFile(temp_out, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            for info in zip_in.infolist():
+                data = zip_in.read(info.filename)
+                if info.filename in by_file:
+                    try:
+                        content = data.decode('utf-8', errors='replace')
+                        modified = False
+                        for r in by_file[info.filename]:
+                            old_url = r["url"]
+                            new_url = r["suggested_url"]
+                            if old_url in content:
+                                content = content.replace(old_url, new_url)
+                                modified = True
+                            old_url_esc = _html.escape(old_url)
+                            new_url_esc = _html.escape(new_url)
+                            if old_url_esc in content:
+                                content = content.replace(old_url_esc, new_url_esc)
+                                modified = True
+                        if modified:
+                            data = content.encode('utf-8')
+                            processed += 1
+                    except Exception as e:
+                        print(f"Error replacing in {info.filename}: {e}")
+                zip_out.writestr(info, data)
+    else:
+        import tarfile
+        with tarfile.open(archive_path, 'r:gz') as tar_in:
+            with tarfile.open(temp_out, 'w:gz', format=tar_in.format) as tar_out:
+                for member in tar_in:
+                    if not member.isfile():
+                        tar_out.addfile(member)
+                        continue
+                    
+                    fh = tar_in.extractfile(member)
+                    if fh is None:
+                        tar_out.addfile(member)
+                        continue
+                        
+                    original_bytes = fh.read()
+                    
+                    if member.name in by_file:
+                        try:
+                            content = original_bytes.decode('utf-8', errors='replace')
+                            modified = False
+                            for r in by_file[member.name]:
+                                old_url = r["url"]
+                                new_url = r["suggested_url"]
+                                if old_url in content:
+                                    content = content.replace(old_url, new_url)
+                                    modified = True
+                                old_url_esc = _html.escape(old_url)
+                                new_url_esc = _html.escape(new_url)
+                                if old_url_esc in content:
+                                    content = content.replace(old_url_esc, new_url_esc)
+                                    modified = True
+                            if modified:
+                                new_bytes = content.encode('utf-8')
+                                new_info = copy.copy(member)
+                                new_info.size = len(new_bytes)
+                                tar_out.addfile(new_info, io.BytesIO(new_bytes))
+                                processed += 1
+                            else:
+                                tar_out.addfile(member, io.BytesIO(original_bytes))
+                        except Exception as e:
+                            print(f"Error replacing in {member.name}: {e}")
+                            tar_out.addfile(member, io.BytesIO(original_bytes))
+                    else:
+                        tar_out.addfile(member, io.BytesIO(original_bytes))
+                        
+    if os.path.exists(temp_out):
+        shutil.move(temp_out, archive_path)
+    return processed
+
+@router.post("/tasks/{task_id}/replace-links")
+def replace_task_links(
+    task_id: str,
+    req: ReplaceLinksRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
+):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t or t.status != "completed" or not t.result_filename:
+        return {"error": "Task not completed or file not found"}
+        
+    mbz_path = UPLOAD_DIR / t.result_filename
+    if not mbz_path.exists():
+        return {"error": "Processed MBZ file not found on disk"}
+        
+    replacements_list = [r.dict() for r in req.replacements]
+    processed_count = _replace_links_in_archive(str(mbz_path), replacements_list)
+    
+    # Update links_{task_id}.json
+    report_path = UPLOAD_DIR / f"links_{task_id}.json"
+    if report_path.exists():
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            
+            # Map replacements for quick lookup
+            repl_map = {(r["url"], r["archive_path"]): r["suggested_url"] for r in replacements_list}
+            
+            for item in report.get("links", []):
+                key = (item["url"], item.get("archive_path", ""))
+                if key in repl_map:
+                    new_url = repl_map[key]
+                    item["url"] = new_url
+                    item["is_active"] = True
+                    item["error"] = None
+                    if "suggested_url" in item:
+                        del item["suggested_url"]
+                    if "reason" in item:
+                        del item["reason"]
+            
+            # Recompute summary
+            total = len(report.get("links", []))
+            broken = sum(1 for item in report.get("links", []) if not item.get("is_active"))
+            active = total - broken
+            report["summary"] = {
+                "total": total,
+                "active": active,
+                "broken": broken
+            }
+            
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error updating links report JSON: {e}")
+            
+    # Mark links as approved
+    cfg = dict(t.config or {})
+    cfg["links_approved"] = True
+    t.config = cfg
+    db.commit()
+            
+    return {"status": "success", "replaced_files_count": processed_count}
+
+
+@router.post("/tasks/{task_id}/approve-links")
+def approve_task_links(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
+):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t:
+        return {"error": "Task not found"}
+        
+    cfg = dict(t.config or {})
+    cfg["links_approved"] = True
+    t.config = cfg
+    db.commit()
+    return {"status": "success"}
+

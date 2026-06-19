@@ -79,6 +79,16 @@ const IconLink = () => (
   </svg>
 );
 
+const IconText = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="16" y1="13" x2="8" y2="13" />
+    <line x1="16" y1="17" x2="8" y2="17" />
+    <polyline points="10 9 9 9 8 9" />
+  </svg>
+);
+
 // ── Language options matching what the backend supports ──────────────────
 const LANGUAGES = [
   { code: 'pl', label: 'Polski (PL)' },
@@ -107,6 +117,7 @@ const App = () => {
     translate: true,
     generate_h5p: false,
     check_links: false,
+    extract_texts: false,
     h5p_types: ['Quiz (ABCD)'],
     h5p_level: 'Mieszany (auto)',
     h5p_amount: 5,
@@ -115,6 +126,85 @@ const App = () => {
   });
   const [linksReports, setLinksReports] = useState({});
   const [expandedLinksReport, setExpandedLinksReport] = useState(null);
+  const [selectedLinks, setSelectedLinks] = useState({}); // task_id -> array of link indices
+
+  const toggleSelectLink = (taskId, idx) => {
+    setSelectedLinks(prev => {
+      const current = prev[taskId] || [];
+      const updated = current.includes(idx)
+        ? current.filter(i => i !== idx)
+        : [...current, idx];
+      return { ...prev, [taskId]: updated };
+    });
+  };
+
+  const toggleSelectAll = (taskId, brokenLinksIndices) => {
+    setSelectedLinks(prev => {
+      const current = prev[taskId] || [];
+      const allSelected = brokenLinksIndices.every(idx => current.includes(idx));
+      const updated = allSelected ? [] : brokenLinksIndices;
+      return { ...prev, [taskId]: updated };
+    });
+  };
+
+  const handleReplaceSelectedLinks = async (taskId) => {
+    const selectedIndices = selectedLinks[taskId] || [];
+    if (selectedIndices.length === 0) return;
+
+    const report = linksReports[taskId];
+    if (!report) return;
+
+    const replacements = selectedIndices.map(idx => {
+      const link = report.links[idx];
+      return {
+        url: link.url,
+        suggested_url: link.suggested_url,
+        archive_path: link.archive_path || ''
+      };
+    }).filter(r => r.suggested_url);
+
+    if (replacements.length === 0) {
+      alert("Żaden z zaznaczonych linków nie ma sugerowanego zamiennika.");
+      return;
+    }
+
+    if (!window.confirm(`Czy na pewno chcesz zastąpić te ${replacements.length} linki w pliku MBZ?`)) {
+      return;
+    }
+
+    try {
+      const res = await api.post(`/tasks/${taskId}/replace-links`, { replacements });
+      alert(`Pomyślnie zaktualizowano ${res.data.replaced_files_count} plików w archiwum MBZ.`);
+      // Clear selection
+      setSelectedLinks(prev => ({ ...prev, [taskId]: [] }));
+      // Refetch links report to show updated state
+      const updatedReport = await api.get(`/tasks/${taskId}/links`);
+      setLinksReports(prev => ({ ...prev, [taskId]: updatedReport.data }));
+      // Refetch tasks so the approve state in task is updated
+      fetchTasks();
+    } catch (err) {
+      console.error("Failed to replace links:", err);
+      alert("Wystąpił błąd podczas zastępowania linków.");
+    }
+  };
+
+  const handleApproveLinks = async (taskId, e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!window.confirm("Czy na pewno chcesz zatwierdzić stan linków i odblokować pobieranie MBZ?")) {
+      return;
+    }
+    try {
+      await api.post(`/tasks/${taskId}/approve-links`);
+      alert("Odblokowano pobieranie pliku MBZ.");
+      fetchTasks();
+    } catch (err) {
+      console.error("Failed to approve links:", err);
+      alert("Wystąpił błąd podczas zatwierdzania linków.");
+    }
+  };
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [user, setUser] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -256,6 +346,7 @@ const App = () => {
     fd.append('translate', config.translate);
     fd.append('generate_h5p', config.generate_h5p);
     fd.append('check_links', config.check_links);
+    fd.append('extract_texts', config.extract_texts);
     fd.append('source_lang', config.source_lang);
     fd.append('target_langs', config.target_langs.join(','));
     fd.append('api_type', config.api_type);
@@ -362,13 +453,13 @@ const App = () => {
 
   const runHint = !file
     ? 'Wybierz plik aby kontynuować'
-    : (!config.translate && !config.generate_h5p && !config.check_links)
+    : (!config.translate && !config.generate_h5p && !config.check_links && !config.extract_texts)
       ? 'Wybierz co najmniej jeden agent'
       : (config.translate && config.target_langs.length === 0)
         ? 'Wybierz co najmniej jeden język docelowy'
         : '';
 
-  const canRun = !!file && (config.translate || config.generate_h5p || config.check_links) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
+  const canRun = !!file && (config.translate || config.generate_h5p || config.check_links || config.extract_texts) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
@@ -486,6 +577,12 @@ const App = () => {
                   onClick={() => setConfig(p => ({ ...p, check_links: !p.check_links }))}
                 >
                   <IconLink /> Linki
+                </button>
+                <button 
+                  className={`agent-tab ${config.extract_texts ? 'active' : ''}`}
+                  onClick={() => setConfig(p => ({ ...p, extract_texts: !p.extract_texts }))}
+                >
+                  <IconText /> Parser tekstu
                 </button>
               </div>
 
@@ -611,6 +708,18 @@ const App = () => {
                   </div>
                 </div>
               )}
+
+              {config.extract_texts && (
+                <div className="agent-config-section">
+                  <div className="agent-config-label">
+                    <IconText />
+                    Parser tekstu
+                  </div>
+                  <div className="field">
+                    <span style={{fontSize: '0.8rem', color: 'var(--muted)'}}>Wyodrębnia całą zawartość tekstową z kursu i zapisuje ją do pliku JSON bez modyfikowania archiwum MBZ. Przydatne do analizy treści lub niezależnego tłumaczenia.</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -701,13 +810,15 @@ const App = () => {
                           const isTranslate = task.config?.translate === true || task.config?.translate === 'true';
                           const isH5p = task.config?.generate_h5p === true || task.config?.generate_h5p === 'true';
                           const isLinks = task.config?.check_links === true || task.config?.check_links === 'true';
-                          const hasAny = isTranslate || isH5p || isLinks;
+                          const isExtract = task.config?.extract_texts === true || task.config?.extract_texts === 'true';
+                          const hasAny = isTranslate || isH5p || isLinks || isExtract;
                           
                           return (
                             <>
                               {isTranslate && <span className="task-agent-tag">Tłumaczenie</span>}
                               {isH5p && <span className="task-agent-tag">H5P</span>}
                               {isLinks && <span className="task-agent-tag">Linki</span>}
+                              {isExtract && <span className="task-agent-tag">Parser tekstu</span>}
                               {!hasAny && <span className="task-agent-tag">Tłumaczenie</span>}
                             </>
                           );
@@ -786,24 +897,48 @@ const App = () => {
                               <IconDl /> Treści H5P
                             </button>
                           )}
-                          {task.config?.translate && (
-                            <>
-                              <button
-                                className="btn-dl"
-                                onClick={e => handleDownloadTexts(task, e)}
-                                style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
-                                title="Pobierz wyekstrahowane i przetłumaczone teksty w formacie JSON"
-                              >
-                                <IconDl /> Teksty (JSON)
-                              </button>
+                          {task.has_texts_report && (
+                            <button
+                              className="btn-dl"
+                              onClick={e => handleDownloadTexts(task, e)}
+                              style={{ background: 'var(--raised)', borderColor: 'var(--border-hi)' }}
+                              title="Pobierz wyekstrahowane teksty w formacie JSON"
+                            >
+                              <IconDl /> Teksty (JSON)
+                            </button>
+                          )}
+                          {(() => {
+                            const isTranslate = task.config?.translate === true || task.config?.translate === 'true';
+                            const isH5p = task.config?.generate_h5p === true || task.config?.generate_h5p === 'true';
+                            const isLinks = task.config?.check_links === true || task.config?.check_links === 'true';
+                            const isApproved = task.config?.links_approved === true || task.config?.links_approved === 'true';
+                            
+                            const hasMbzOutput = isTranslate || isLinks || isH5p;
+                            
+                            if (!hasMbzOutput) return null;
+                            
+                            if (isLinks && !isApproved) {
+                              return (
+                                <button
+                                  className="btn-dl"
+                                  onClick={e => handleApproveLinks(task.id, e)}
+                                  style={{ background: 'var(--primary)', borderColor: 'var(--primary)', color: '#fff' }}
+                                  title="Zatwierdź status linków, aby odblokować pobieranie MBZ"
+                                >
+                                  Zatwierdź linki
+                                </button>
+                              );
+                            }
+                            
+                            return (
                               <button
                                 className="btn-dl"
                                 onClick={e => handleDownload(task, e)}
                               >
                                 <IconDl /> Pobierz MBZ
                               </button>
-                            </>
-                          )}
+                            );
+                          })()}
                         </div>
                       )}
                       {(task.subtasks?.length > 0 || task.has_links_report) && (
@@ -852,6 +987,28 @@ const App = () => {
                           <table className="links-report-table">
                             <thead>
                               <tr>
+                                <th style={{ width: '40px', textAlign: 'center' }}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={
+                                      (() => {
+                                        const brokenIndices = linksReports[task.id].links
+                                          .map((l, i) => ({ l, i }))
+                                          .filter(item => !item.l.is_active)
+                                          .map(item => item.i);
+                                        const selected = selectedLinks[task.id] || [];
+                                        return brokenIndices.length > 0 && brokenIndices.every(idx => selected.includes(idx));
+                                      })()
+                                    }
+                                    onChange={() => {
+                                      const brokenIndices = linksReports[task.id].links
+                                        .map((l, i) => ({ l, i }))
+                                        .filter(item => !item.l.is_active)
+                                        .map(item => item.i);
+                                      toggleSelectAll(task.id, brokenIndices);
+                                    }}
+                                  />
+                                </th>
                                 <th>Adres URL</th>
                                 <th>Lokalizacja w kursie</th>
                                 <th>Status</th>
@@ -861,6 +1018,15 @@ const App = () => {
                             <tbody>
                               {linksReports[task.id].links.map((link, idx) => (
                                 <tr key={idx} className={link.is_active ? "row-active" : "row-broken"}>
+                                  <td style={{ textAlign: 'center' }}>
+                                    {!link.is_active && link.suggested_url && (
+                                      <input 
+                                        type="checkbox"
+                                        checked={(selectedLinks[task.id] || []).includes(idx)}
+                                        onChange={() => toggleSelectLink(task.id, idx)}
+                                      />
+                                    )}
+                                  </td>
                                   <td className="url-cell" title={link.url}>
                                     {link.is_active ? (
                                       <a href={link.url} target="_blank" rel="noopener noreferrer" className="external-link-anchor">
@@ -917,6 +1083,30 @@ const App = () => {
                               ))}
                             </tbody>
                           </table>
+                          {selectedLinks[task.id]?.length > 0 && (
+                            <div className="replace-links-action-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                              <button
+                                className="btn-replace-links"
+                                onClick={() => handleReplaceSelectedLinks(task.id)}
+                                style={{
+                                  background: 'var(--primary)',
+                                  border: '1px solid var(--primary)',
+                                  color: '#fff',
+                                  fontWeight: 'bold',
+                                  padding: '8px 16px',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  fontFamily: 'inherit',
+                                  fontSize: '0.78rem',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.06em',
+                                  transition: 'background 0.2s'
+                                }}
+                              >
+                                Zastąp zaznaczone linki ({selectedLinks[task.id].length})
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
