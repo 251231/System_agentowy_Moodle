@@ -1009,8 +1009,9 @@ const App = () => {
                       {linksReports[task.id].links.length === 0 ? (
                         <div className="links-report-empty">Nie wykryto żadnych linków zewnętrznych w tym kursie.</div>
                       ) : (
-                        <div className="links-table-wrapper">
-                          <table className="links-report-table">
+                        <>
+                          <div className="links-table-wrapper">
+                            <table className="links-report-table">
                             <thead>
                               <tr>
                                 <th style={{ width: '40px', textAlign: 'center' }}>
@@ -1109,31 +1110,32 @@ const App = () => {
                               ))}
                             </tbody>
                           </table>
-                          {selectedLinks[task.id]?.length > 0 && (
-                            <div className="replace-links-action-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-                              <button
-                                className="btn-replace-links"
-                                onClick={() => handleReplaceSelectedLinks(task.id)}
-                                style={{
-                                  background: 'var(--primary)',
-                                  border: '1px solid var(--primary)',
-                                  color: '#fff',
-                                  fontWeight: 'bold',
-                                  padding: '8px 16px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontFamily: 'inherit',
-                                  fontSize: '0.78rem',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.06em',
-                                  transition: 'background 0.2s'
-                                }}
-                              >
-                                Zastąp zaznaczone linki ({selectedLinks[task.id].length})
-                              </button>
-                            </div>
-                          )}
                         </div>
+                        {selectedLinks[task.id]?.length > 0 && (
+                          <div className="replace-links-action-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                            <button
+                              className="btn-replace-links"
+                              onClick={() => handleReplaceSelectedLinks(task.id)}
+                              style={{
+                                background: 'var(--primary)',
+                                border: '1px solid var(--primary)',
+                                color: '#fff',
+                                fontWeight: 'bold',
+                                padding: '8px 16px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontFamily: 'inherit',
+                                fontSize: '0.78rem',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.06em',
+                                transition: 'background 0.2s'
+                              }}
+                            >
+                              Zastąp zaznaczone linki ({selectedLinks[task.id].length})
+                            </button>
+                          </div>
+                        )}
+                        </>
                       )}
                     </div>
                   )}
