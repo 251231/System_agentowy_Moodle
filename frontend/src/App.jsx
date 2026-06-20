@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import api from './api';
 import Auth from './Auth';
 import ResetPassword from './ResetPassword';
+import LandingPage from './LandingPage';
 import './App.css';
 
 // test deploy
@@ -461,6 +462,16 @@ const App = () => {
 
   const canRun = !!file && (config.translate || config.generate_h5p || config.check_links || config.extract_texts) && (!config.translate || config.target_langs.length > 0) && !isSubmitting;
 
+  const [showAuth, setShowAuth] = useState(window.location.hash === '#login');
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setShowAuth(window.location.hash === '#login');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   if (resetToken) {
     return <ResetPassword token={resetToken} onResetSuccess={() => {
       setResetToken(null);
@@ -469,7 +480,22 @@ const App = () => {
   }
 
   if (!isAuthenticated) {
-    return <Auth onLoginSuccess={() => setIsAuthenticated(true)} />;
+    if (showAuth) {
+      return <Auth 
+        onLoginSuccess={() => {
+          window.location.hash = '';
+          setIsAuthenticated(true);
+        }} 
+        onBack={() => {
+          if (window.history.state !== null || window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.hash = '';
+          }
+        }} 
+      />;
+    }
+    return <LandingPage onLoginClick={() => window.location.hash = '#login'} />;
   }
 
   // ── render ───────────────────────────────────────────────────────────────
@@ -983,8 +1009,9 @@ const App = () => {
                       {linksReports[task.id].links.length === 0 ? (
                         <div className="links-report-empty">Nie wykryto żadnych linków zewnętrznych w tym kursie.</div>
                       ) : (
-                        <div className="links-table-wrapper">
-                          <table className="links-report-table">
+                        <>
+                          <div className="links-table-wrapper">
+                            <table className="links-report-table">
                             <thead>
                               <tr>
                                 <th style={{ width: '40px', textAlign: 'center' }}>
@@ -1083,31 +1110,32 @@ const App = () => {
                               ))}
                             </tbody>
                           </table>
-                          {selectedLinks[task.id]?.length > 0 && (
-                            <div className="replace-links-action-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-                              <button
-                                className="btn-replace-links"
-                                onClick={() => handleReplaceSelectedLinks(task.id)}
-                                style={{
-                                  background: 'var(--primary)',
-                                  border: '1px solid var(--primary)',
-                                  color: '#fff',
-                                  fontWeight: 'bold',
-                                  padding: '8px 16px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontFamily: 'inherit',
-                                  fontSize: '0.78rem',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.06em',
-                                  transition: 'background 0.2s'
-                                }}
-                              >
-                                Zastąp zaznaczone linki ({selectedLinks[task.id].length})
-                              </button>
-                            </div>
-                          )}
                         </div>
+                        {selectedLinks[task.id]?.length > 0 && (
+                          <div className="replace-links-action-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                            <button
+                              className="btn-replace-links"
+                              onClick={() => handleReplaceSelectedLinks(task.id)}
+                              style={{
+                                background: 'var(--primary)',
+                                border: '1px solid var(--primary)',
+                                color: '#fff',
+                                fontWeight: 'bold',
+                                padding: '8px 16px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontFamily: 'inherit',
+                                fontSize: '0.78rem',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.06em',
+                                transition: 'background 0.2s'
+                              }}
+                            >
+                              Zastąp zaznaczone linki ({selectedLinks[task.id].length})
+                            </button>
+                          </div>
+                        )}
+                        </>
                       )}
                     </div>
                   )}

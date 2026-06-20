@@ -22,7 +22,7 @@
   --muted: #BFBFBF;
   --dim: rgba(191, 191, 191, 0.4);
   --red-err: #e74c3c;
-  --sidebar-w: 500px;
+  --sidebar-w: 600px;
 }
 
 body {
@@ -1044,7 +1044,14 @@ body {
 }
 
 .links-report-table tr.row-active:hover {
-  background: rgba(255, 255, 255, 0.01);
+  background-color: rgba(46, 204, 113, 0.05);
+}
+
+.links-report-table input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 .url-cell {
