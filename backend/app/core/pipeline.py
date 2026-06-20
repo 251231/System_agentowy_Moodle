@@ -82,9 +82,14 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
             shutil.copy2(input_path, output_path)
             if is_extract_texts:
                 set_subtask(db, task_id, "Text Extractor", "processing", "Wydobywanie tekstów z kursu...")
+                task.progress = 10
+                db.commit()
                 try:
                     import html as _html
                     global_extract_set = processor._scan_and_extract_all(input_path)
+                    task.progress = 50
+                    db.commit()
+                    
                     raw_texts = set(text for text, lang in global_extract_set)
                     
                     cleaned_texts = []
@@ -100,6 +105,9 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
                     export_path = UPLOAD_DIR / f"texts_{task_id}.json"
                     with open(export_path, "w", encoding="utf-8") as f:
                         json.dump(export_data, f, ensure_ascii=False, indent=2)
+                        
+                    task.progress = 100
+                    db.commit()
                     set_subtask(db, task_id, "Text Extractor", "completed", f"Wyodrębniono {len(source_texts)} unikalnych tekstów.")
                     extract_set = global_extract_set
                 except Exception as e:
@@ -118,6 +126,8 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
             set_subtask(db, task_id, "Translation Processor", "completed", "Tłumaczenie ukończone.")
 
         if is_h5p:
+            task.progress = 10
+            db.commit()
             set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie treści H5P...")
             try:
                 from app.core.h5p_generator import generate_h5p_quiz_json, create_h5p_archive
@@ -130,6 +140,9 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
                 set_subtask(db, task_id, "H5P Generator", "processing",
                              f"Generowanie treści H5P z {len(source_texts)} fragmentów tekstu...")
                 print(f"[H5P] Sending {len(source_texts)} text chunks to LLM")
+                
+                task.progress = 30
+                db.commit()
 
                 questions = generate_h5p_quiz_json(
                     source_texts,
@@ -137,6 +150,9 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
                     config.get("api_key", ""),
                     config
                 )
+                
+                task.progress = 80
+                db.commit()
 
                 if questions:
                     h5p_filename = f"h5p_{task_id}.h5p"
@@ -152,6 +168,8 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
                 set_subtask(db, task_id, "H5P Generator", "failed", f"Błąd: {str(e)}")
 
         if is_links:
+            task.progress = 10
+            db.commit()
             set_subtask(db, task_id, "Link Checker", "processing", "Inicjalizacja weryfikacji linków...")
             try:
                 from app.core.link_checker import MoodleLinkChecker
@@ -159,6 +177,9 @@ def run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
                 def link_progress_callback(percent: int, msg: str):
                     db_p = SessionLocal()
                     try:
+                        t = db_p.query(Task).filter_by(id=task_id).first()
+                        if t and t.status == "processing":
+                            t.progress = percent
                         st = db_p.query(SubTask).filter_by(task_id=task_id, agent_name="Link Checker").first()
                         if st:
                             st.log = msg
