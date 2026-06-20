@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from './api';
 
-export default function Auth({ onLoginSuccess }) {
+export default function Auth({ onLoginSuccess, onBack }) {
   const [isLogin, setIsLogin] = useState(true);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -73,7 +73,7 @@ export default function Auth({ onLoginSuccess }) {
           email,
           password
         });
-        setIsLogin(true); // Switch to login after successful register
+        setIsLogin(true);
         setError("Konto utworzone! Możesz się teraz zalogować.");
       }
     } catch (err) {
@@ -246,7 +246,7 @@ export default function Auth({ onLoginSuccess }) {
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.9rem', color: 'var(--dim)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {isLogin && !isForgotPassword && (
+          {/* {isLogin && !isForgotPassword && (
             <div>
               <span
                 onClick={() => { setIsForgotPassword(true); setError(null); setSuccess(null); }}
@@ -255,7 +255,7 @@ export default function Auth({ onLoginSuccess }) {
                 Zapomniałeś hasła?
               </span>
             </div>
-          )}
+          )} */}
           
           {isForgotPassword ? (
             <div>

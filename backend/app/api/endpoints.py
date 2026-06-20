@@ -1,188 +1,24 @@
 import os
+import json
 import shutil
-import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db, SessionLocal
-from app.db.models import Task, SubTask, User
+from app.db.database import get_db
+from app.db.models import Task, User
 from app.api import deps
-from app.core.moodle_processor import MoodleMBZProcessor
+from app.api.schemas import ReplaceLinksRequest
+from app.core.pipeline import run_pipeline, set_subtask, UPLOAD_DIR
+from app.core.archive_utils import replace_links_in_archive
 
 router = APIRouter()
-
-UPLOAD_DIR = Path("temp")
-UPLOAD_DIR.mkdir(exist_ok=True)
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-def _set_subtask(db: Session, task_id: str, agent_name: str, status: str, log: str = ""):
-    st = db.query(SubTask).filter_by(task_id=task_id, agent_name=agent_name).first()
-    if not st:
-        st = SubTask(task_id=task_id, agent_name=agent_name)
-        db.add(st)
-    st.status = status
-    st.log = log
-    if status == "processing":
-        st.started_at = datetime.datetime.utcnow()
-    if status in ("completed", "failed"):
-        st.finished_at = datetime.datetime.utcnow()
-    db.commit()
-
-
-# ── background job ────────────────────────────────────────────────────────────
-def _run_pipeline(task_id: str, input_path: str, output_path: str, config: dict):
-    db = SessionLocal()
-    try:
-        task = db.query(Task).filter_by(id=task_id).first()
-        if not task:
-            return
-            
-        task.status = "processing"
-        db.commit()
-        
-        is_translate = config.get("translate") in (True, "true", "True", "1")
-        is_h5p = config.get("generate_h5p") in (True, "true", "True", "1")
-        is_links = config.get("check_links") in (True, "true", "True", "1")
-
-        if is_translate:
-            _set_subtask(db, task_id, "Translation Processor", "processing")
-
-        def check_cancel():
-            db_s = SessionLocal()
-            curr = db_s.query(Task).filter_by(id=task_id).first()
-            cancelled = curr and curr.status == "cancelled"
-            db_s.close()
-            if cancelled:
-                raise Exception("Przerwano przez uzytkownika.")
-
-        def update_progress(percent: int, msg: str):
-            db_p = SessionLocal()
-            try:
-                t = db_p.query(Task).filter_by(id=task_id).first()
-                if t and t.status == "processing":
-                    t.progress = percent
-                    # Optionally update the subtask log with the current message
-                    st = db_p.query(SubTask).filter_by(task_id=task_id, agent_name="Translation Processor").first()
-                    if st:
-                        st.log = msg
-                    db_p.commit()
-            finally:
-                db_p.close()
-
-        processor = MoodleMBZProcessor(
-            source_lang=config.get("source_lang", "en"),
-            target_langs=config.get("target_langs", ["en", "pl"]),
-            api_type=config.get("api_type", "none"),
-            api_key=config.get("api_key", ""),
-            cancel_callback=check_cancel,
-            progress_callback=update_progress
-        )
-        
-        extract_set = None
-        if is_translate:
-            extract_set = processor.process_mbz(input_path, output_path, task_id=task_id)
-        else:
-            # If translation is off, just copy the file over
-            shutil.copy2(input_path, output_path)
-            if is_h5p:
-                # Skanuj kurs aby wydobyć teksty do H5P
-                _set_subtask(db, task_id, "H5P Generator", "processing", "Wydobywanie tekstów z kursu...")
-                source_texts = processor.extract_source_texts(input_path)
-                # Tworzymy fake extract_set kompatybilny z dalszym kodem
-                extract_set = set((t, config.get("source_lang", "en")) for t in source_texts)
-                print(f"[H5P] Scan: {len(source_texts)} unique texts extracted from MBZ")
-
-        if is_translate:
-            _set_subtask(db, task_id, "Translation Processor", "completed", "Tłumaczenie ukończone.")
-
-        if is_h5p:
-            _set_subtask(db, task_id, "H5P Generator", "processing", "Generowanie treści H5P...")
-            try:
-                from app.core.h5p_generator import generate_h5p_quiz_json, create_h5p_archive
-
-                # --- zbierz teksty źródłowe ---
-                if extract_set:
-                    source_texts = list(set(text for text, lang in extract_set))
-                else:
-                    source_texts = []
-
-                _set_subtask(db, task_id, "H5P Generator", "processing",
-                             f"Generowanie treści H5P z {len(source_texts)} fragmentów tekstu...")
-                print(f"[H5P] Sending {len(source_texts)} text chunks to LLM")
-
-                questions = generate_h5p_quiz_json(
-                    source_texts,
-                    config.get("api_type", "none"),
-                    config.get("api_key", ""),
-                    config
-                )
-
-                if questions:
-                    h5p_filename = f"h5p_{task_id}.h5p"
-                    h5p_path = UPLOAD_DIR / h5p_filename
-                    create_h5p_archive(questions, str(h5p_path))
-                    
-                    task.h5p_filename = h5p_filename
-                    db.commit()
-                    _set_subtask(db, task_id, "H5P Generator", "completed", f"Wygenerowano treści H5P ({len(questions)} elementów)")
-                else:
-                    _set_subtask(db, task_id, "H5P Generator", "failed", "Nie udało się wygenerować pytań z podanych tekstów.")
-            except Exception as e:
-                _set_subtask(db, task_id, "H5P Generator", "failed", f"Błąd: {str(e)}")
-
-        if is_links:
-            _set_subtask(db, task_id, "Link Checker", "processing", "Inicjalizacja weryfikacji linków...")
-            try:
-                from app.core.link_checker import MoodleLinkChecker
-                
-                def link_progress_callback(percent: int, msg: str):
-                    db_p = SessionLocal()
-                    try:
-                        st = db_p.query(SubTask).filter_by(task_id=task_id, agent_name="Link Checker").first()
-                        if st:
-                            st.log = msg
-                        db_p.commit()
-                    finally:
-                        db_p.close()
-                
-                checker = MoodleLinkChecker(
-                    api_key=config.get("api_key", ""),
-                    task_id=task_id,
-                    progress_callback=link_progress_callback
-                )
-                links_report_path = UPLOAD_DIR / f"links_{task_id}.json"
-                checker.scan_and_verify(input_path, str(links_report_path))
-                _set_subtask(db, task_id, "Link Checker", "completed", "Weryfikacja linków zakończona sukcesem.")
-            except Exception as e:
-                _set_subtask(db, task_id, "Link Checker", "failed", f"Błąd: {str(e)}")
-
-        task.status = "completed"
-        task.progress = 100
-        task.result_filename = Path(output_path).name
-        db.commit()
-    except Exception as e:
-        task = db.query(Task).filter_by(id=task_id).first()
-        if task:
-            task.status = "failed"
-            _set_subtask(db, task_id, "Translation Processor", "failed", str(e))
-            db.commit()
-        print(f"[Pipeline] Error: {e}")
-    finally:
-        if Path(input_path).exists():
-            Path(input_path).unlink()
-        db.close()
-
-
-# ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/")
 def root():
     return {"status": "Moodle Agent System API is running"}
-
 
 @router.post("/tasks")
 async def create_task(
@@ -191,6 +27,7 @@ async def create_task(
     translate:     bool = Form(False),
     generate_h5p:  bool = Form(False),
     check_links:   bool = Form(False),
+    extract_texts: bool = Form(False),
     source_lang:   str  = Form("en"),
     target_langs:  str  = Form("en,pl"),
     api_type:      str  = Form("none"),
@@ -207,6 +44,7 @@ async def create_task(
         "translate":     translate,
         "generate_h5p":  generate_h5p,
         "check_links":   check_links,
+        "extract_texts": extract_texts,
         "source_lang":   source_lang,
         "target_langs":  [l.strip() for l in target_langs.split(",")],
         "api_type":      api_type,
@@ -218,7 +56,6 @@ async def create_task(
         "h5p_instructions": h5p_instructions,
     }
 
-    # For edge cases where API KEY is not in os.environ yet but maybe another key type
     if not config["api_key"]:
         if api_type == "gemini":
              config["api_key"] = os.environ.get("GEMINI_API_KEY", "")
@@ -237,11 +74,10 @@ async def create_task(
         shutil.copyfileobj(file.file, buf)
 
     background_tasks.add_task(
-        _run_pipeline, task.id, str(input_path), str(output_path), config
+        run_pipeline, task.id, str(input_path), str(output_path), config
     )
 
     return {"task_id": task.id, "status": "pending"}
-
 
 @router.get("/tasks")
 def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
@@ -249,6 +85,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
     result = []
     for t in tasks:
         has_links_report = (UPLOAD_DIR / f"links_{t.id}.json").exists()
+        has_texts_report = (UPLOAD_DIR / f"texts_{t.id}.json").exists()
         result.append({
             "id":                t.id,
             "original_filename": t.original_filename,
@@ -256,6 +93,7 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
             "progress":          t.progress,
             "h5p_filename":      t.h5p_filename,
             "has_links_report":  has_links_report,
+            "has_texts_report":  has_texts_report,
             "config":            t.config,
             "created_at":        t.created_at.isoformat() if t.created_at else None,
             "subtasks": [
@@ -265,13 +103,13 @@ def list_tasks(db: Session = Depends(get_db), current_user: User = Depends(deps.
         })
     return result
 
-
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
     t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
     if not t:
         return {"status": "not_found"}
     has_links_report = (UPLOAD_DIR / f"links_{task_id}.json").exists()
+    has_texts_report = (UPLOAD_DIR / f"texts_{task_id}.json").exists()
     return {
         "id":                t.id,
         "original_filename": t.original_filename,
@@ -279,13 +117,13 @@ def get_task(task_id: str, db: Session = Depends(get_db), current_user: User = D
         "progress":          t.progress,
         "h5p_filename":      t.h5p_filename,
         "has_links_report":  has_links_report,
+        "has_texts_report":  has_texts_report,
         "config":            t.config,
         "subtasks": [
             {"agent": s.agent_name, "status": s.status, "log": s.log}
             for s in t.subtasks
         ],
     }
-
 
 @router.get("/tasks/{task_id}/links")
 def get_task_links(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
@@ -303,7 +141,6 @@ def get_task_links(task_id: str, db: Session = Depends(get_db), current_user: Us
         media_type="application/json",
     )
 
-
 @router.post("/tasks/{task_id}/cancel")
 def cancel_task(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
     t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
@@ -311,11 +148,10 @@ def cancel_task(task_id: str, db: Session = Depends(get_db), current_user: User 
         return {"error": "not_found"}
     if t.status == "processing" or t.status == "pending":
         t.status = "cancelled"
-        _set_subtask(db, task_id, "Translation Processor", "cancelled", "Anulowano zadanie.")
+        set_subtask(db, task_id, "Translation Processor", "cancelled", "Anulowano zadanie.")
         db.commit()
         return {"status": "cancelled"}
     return {"status": "cannot_cancel"}
-
 
 @router.get("/download/{task_id}")
 def download(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
@@ -330,7 +166,6 @@ def download(task_id: str, db: Session = Depends(get_db), current_user: User = D
         filename=f"processed_{t.original_filename}",
         media_type="application/octet-stream",
     )
-
 
 @router.get("/tasks/{task_id}/texts")
 def get_task_texts(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
@@ -348,7 +183,6 @@ def get_task_texts(task_id: str, db: Session = Depends(get_db), current_user: Us
         media_type="application/json",
     )
 
-
 @router.get("/download-h5p/{task_id}")
 def download_h5p(task_id: str, db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_active_user)):
     t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
@@ -362,3 +196,78 @@ def download_h5p(task_id: str, db: Session = Depends(get_db), current_user: User
         filename=f"h5p_{t.original_filename.replace('.mbz', '.h5p')}",
         media_type="application/zip",
     )
+
+@router.post("/tasks/{task_id}/replace-links")
+def replace_task_links(
+    task_id: str,
+    req: ReplaceLinksRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
+):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t or t.status != "completed" or not t.result_filename:
+        return {"error": "Task not completed or file not found"}
+        
+    mbz_path = UPLOAD_DIR / t.result_filename
+    if not mbz_path.exists():
+        return {"error": "Processed MBZ file not found on disk"}
+        
+    replacements_list = [r.dict() for r in req.replacements]
+    processed_count = replace_links_in_archive(str(mbz_path), replacements_list)
+    
+    report_path = UPLOAD_DIR / f"links_{task_id}.json"
+    if report_path.exists():
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                report = json.load(f)
+            
+            repl_map = {(r["url"], r["archive_path"]): r["suggested_url"] for r in replacements_list}
+            
+            for item in report.get("links", []):
+                key = (item["url"], item.get("archive_path", ""))
+                if key in repl_map:
+                    new_url = repl_map[key]
+                    item["url"] = new_url
+                    item["is_active"] = True
+                    item["error"] = None
+                    if "suggested_url" in item:
+                        del item["suggested_url"]
+                    if "reason" in item:
+                        del item["reason"]
+            
+            total = len(report.get("links", []))
+            broken = sum(1 for item in report.get("links", []) if not item.get("is_active"))
+            active = total - broken
+            report["summary"] = {
+                "total": total,
+                "active": active,
+                "broken": broken
+            }
+            
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error updating links report JSON: {e}")
+            
+    cfg = dict(t.config or {})
+    cfg["links_approved"] = True
+    t.config = cfg
+    db.commit()
+            
+    return {"status": "success", "replaced_files_count": processed_count}
+
+@router.post("/tasks/{task_id}/approve-links")
+def approve_task_links(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user)
+):
+    t = db.query(Task).filter_by(id=task_id, owner_id=current_user.id).first()
+    if not t:
+        return {"error": "Task not found"}
+        
+    cfg = dict(t.config or {})
+    cfg["links_approved"] = True
+    t.config = cfg
+    db.commit()
+    return {"status": "success"}
