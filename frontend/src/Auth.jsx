@@ -241,7 +241,14 @@ export default function Auth({ onLoginSuccess, onBack }) {
             disabled={loading}
             style={{ marginTop: '1rem', justifyContent: 'center' }}
           >
-            {loading ? <div className="spinner" /> : (isForgotPassword ? 'Wyślij link' : (isLogin ? 'Zaloguj się' : 'Zarejestruj się'))}
+            {loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="spinner" />
+                <span>{isForgotPassword ? 'Wysyłanie...' : (isLogin ? 'Logowanie...' : 'Rejestracja...')}</span>
+              </div>
+            ) : (
+              isForgotPassword ? 'Wyślij link' : (isLogin ? 'Zaloguj się' : 'Zarejestruj się')
+            )}
           </button>
         </form>
 
