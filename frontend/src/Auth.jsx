@@ -246,7 +246,7 @@ export default function Auth({ onLoginSuccess, onBack }) {
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.9rem', color: 'var(--dim)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {isLogin && !isForgotPassword && (
+          {/* {isLogin && !isForgotPassword && (
             <div>
               <span
                 onClick={() => { setIsForgotPassword(true); setError(null); setSuccess(null); }}
@@ -255,7 +255,7 @@ export default function Auth({ onLoginSuccess, onBack }) {
                 Zapomniałeś hasła?
               </span>
             </div>
-          )}
+          )} */}
           
           {isForgotPassword ? (
             <div>
