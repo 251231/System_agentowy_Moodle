@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# We need to explicitly convert port to int, fallback to 465 if not set
 MAIL_PORT = os.environ.get("MAIL_PORT", 465)
 try:
     MAIL_PORT = int(MAIL_PORT)
@@ -26,10 +25,10 @@ conf = ConnectionConfig(
 )
 
 async def send_reset_password_email(email_to: EmailStr, token: str):
-    # Construct frontend URL, defaulting to local dev server if not set
+
     frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5175")
     reset_link = f"{frontend_url}?token={token}"
-    
+
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <h2 style="color: #8B0002;">System Agentowy Moodle</h2>

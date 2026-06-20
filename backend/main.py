@@ -7,12 +7,9 @@ from app.db.database import engine, Base
 from app.api.endpoints import router as api_router
 from app.api.auth import router as auth_router
 
-# Inicjalizacja tabel w bazie
 Base.metadata.create_all(bind=engine)
 
-# Dynamiczne dodawanie kolumn dla istniejącej bazy
 inspector = inspect(engine)
-
 
 if "tasks" in inspector.get_table_names():
     columns = [col['name'] for col in inspector.get_columns('tasks')]

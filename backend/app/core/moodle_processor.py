@@ -30,8 +30,6 @@ import tempfile
 import lxml.etree as ET
 from pathlib import Path
 
-# ── Files that MUST NOT be modified ─────────────────────────────────────────
-# These control Moodle's restore-step counter; any change → progress() error.
 SKIP_FILES = {
     'moodle_backup.xml', 'completion.xml', 'gradebook.xml', 'groups.xml',
     'outcomes.xml', 'roles.xml', 'filters.xml', 'comments.xml', 'badges.xml',
@@ -41,8 +39,7 @@ SKIP_FILES = {
 }
 
 CONTENT_TAGS = ['name', 'intro', 'summary', 'content', 'description', 'text']
-CHUNK_CHARS  = 8000   # max chars per single OpenAI call
-
+CHUNK_CHARS  = 8000
 
 class MoodleMBZProcessor:
     def __init__(self, source_lang='en', target_langs=None,
@@ -54,16 +51,12 @@ class MoodleMBZProcessor:
         self.cancel_callback = cancel_callback
         self.progress_callback = progress_callback
 
-    # ─────────────────────────────────────────────────────────────── translation
-
     def _mask_html_tags(self, text: str) -> tuple[str, list[str]]:
         tags = []
         def replace_tag(match):
             tags.append(match.group(0))
             return f"[[T{len(tags)-1}]]"
-        
-        # 1. Mask valid HTML/XML-like tags safely (safely ignoring > inside quotes)
-        # 2. Mask Moodle placeholders like @@PLUGINFILE@@, @@CONTEXTID@@, etc.
+
         pattern = r"</?[a-zA-Z!?[][^'\">]*(?:'(?:[^']|\\')*'[^'\">]*|\"(?:[^\"]|\\\")*\"[^'\">]*)*>|@@[A-Z0-9_]+@@"
         masked_text = re.sub(pattern, replace_tag, text)
         return masked_text, tags
@@ -74,7 +67,7 @@ class MoodleMBZProcessor:
             if 0 <= idx < len(tags):
                 return tags[idx]
             return match.group(0)
-        
+
         return re.sub(r"\[\[T(\d+)\]\]", restore_tag, masked_text)
 
     def translate_text(self, html_or_text: str, target_lang: str) -> str:
@@ -100,7 +93,7 @@ class MoodleMBZProcessor:
         if getattr(self, '_extract_mode_set', None) is not None:
             self._extract_mode_set.add((content, target_lang))
             return content
-            
+
         cache_key = (content, target_lang)
         if hasattr(self, '_translation_cache') and cache_key in self._translation_cache:
             return self._translation_cache[cache_key]
@@ -108,7 +101,6 @@ class MoodleMBZProcessor:
         if self.api_type == 'deepl' and self.api_key:
             return self._deepl_translate(content, target_lang)
 
-        # Mask HTML tags for LLMs
         masked, tags = self._mask_html_tags(content)
 
         if self.api_type == 'openai' and self.api_key:
@@ -128,8 +120,7 @@ class MoodleMBZProcessor:
         for text, lang in extract_set:
             if lang not in by_lang: by_lang[lang] = []
             if (text, lang) not in self._translation_cache: by_lang[lang].append(text)
-                
-        # Estimate total batches
+
         total_batches = 0
         for texts in by_lang.values():
             batch_count = 0
@@ -176,7 +167,7 @@ class MoodleMBZProcessor:
                     self.progress_callback(p, f"Tłumaczenie ({processed_batches}/{total_batches} partii)...")
 
     def _translate_batch_to_cache(self, texts: list[str], target_lang: str):
-        # Mask texts
+
         masked_texts = []
         texts_tags = []
         for t in texts:
@@ -192,9 +183,9 @@ class MoodleMBZProcessor:
             results = self._gemini_batch_call(masked_texts, target_lang)
         else:
             results = []
-            
+
         if len(results) != len(texts):
-            # Fallback to single calls
+
             for t, tags in zip(texts, texts_tags):
                 m = self._mask_html_tags(t)[0]
                 if self.api_type == 'openrouter':
@@ -207,7 +198,7 @@ class MoodleMBZProcessor:
                     res = self._deepl_translate(t, target_lang)
                 else:
                     res = f'[{target_lang}] {m}'
-                
+
                 unmasked = self._unmask_html_tags(res, tags)
                 self._translation_cache[(t, target_lang)] = unmasked
         else:
@@ -266,7 +257,7 @@ class MoodleMBZProcessor:
             "openai/gpt-oss-20b:free",
             "openrouter/free"
         ]
-        
+
         for model in free_models:
             for attempt in range(2):
                 try:
@@ -274,7 +265,7 @@ class MoodleMBZProcessor:
                         elapsed = time.time() - self._last_or_call
                         if elapsed < 3.1: time.sleep(3.1 - elapsed)
                     self._last_or_call = time.time()
-                    
+
                     resp = client.chat.completions.create(
                         model=model,
                         messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_content}],
@@ -357,7 +348,7 @@ class MoodleMBZProcessor:
                         elapsed = time.time() - self._last_or_call
                         if elapsed < 3.1: time.sleep(3.1 - elapsed)
                     self._last_or_call = time.time()
-                    
+
                     resp = client.chat.completions.create(
                         model=model,
                         messages=[
@@ -383,39 +374,35 @@ class MoodleMBZProcessor:
             for lang, txt in translations.items() if txt is not None
         )
 
-    # ──────────────────────────────────────────────────── XML content processing
-
-    # ── Safety Validation ─────────────────────────────────────────────────────
     def _is_translatable(self, text: str) -> bool:
         if not text:
             return False
-        # Do not translate serialized PHP objects/arrays
+
         if re.match(r'^[aAwWbBiIdDsSnoON]:\d+:\{', text[:20]) or text.startswith('b:0;') or text.startswith('b:1;'):
             return False
-        # Do not translate URLs
+
         if re.match(r'^https?://[^\s]+$', text):
             return False
-        # Do not translate pure numbers or single special chars
+
         if re.match(r'^[\d\s,.;:/-]+$', text) or len(text) <= 1:
             return False
-        # Do not translate Base64/hashes (long string without spaces)
+
         if len(text) > 40 and ' ' not in text and '<' not in text:
             return False
         return True
 
     def _is_inside_config_block(self, file_content: str, start_idx: int) -> bool:
-        # Search backwards from start_idx up to 1000 characters
+
         search_start = max(0, start_idx - 1000)
         prefix = file_content[search_start:start_idx]
-        
-        # Check if the last opened tag among blacklisted config parents is not closed
+
         for tag in [
-            'plugin_config', 'courseformatoption', 'question_category', 
+            'plugin_config', 'courseformatoption', 'question_category',
             'setting', 'detail'
         ]:
             opens = list(re.finditer(rf'<{tag}(?:\s+[^>]*)?>', prefix))
             closes = list(re.finditer(rf'</{tag}>', prefix))
-            
+
             if opens:
                 last_open = opens[-1].start()
                 last_close = closes[-1].start() if closes else -1
@@ -441,59 +428,48 @@ class MoodleMBZProcessor:
             inner     = m.group(2)
             close_tag = m.group(3)
 
-            # --- Safety checks to prevent DMLWriteException ---
             if '$@NULL@$' in inner or not inner.strip():
                 return m.group(0)
 
             if self._is_inside_config_block(file_content, m.start()):
                 return m.group(0)
-            
+
             stripped_test = inner.strip()
 
-            # Skip translation of configuration payload strings
             if not self._is_translatable(stripped_test):
                 return m.group(0)
 
             if stripped_test.startswith('{') or stripped_test.startswith('['):
                 try:
                     json.loads(stripped_test)
-                    return m.group(0) # Valid JSON, translating it will crash Moodle plugin restore
+                    return m.group(0)
                 except Exception:
                     pass
-            # --------------------------------------------------
 
-            # ── STRATEGY A: CDATA (MUST be checked before {mlang} test) ───────
-            # If inner has CDATA, process it (even if the CDATA itself contains
-            # {mlang} blocks).  Stripping CDATA would make HTML inside mlang
-            # invalid XML, breaking Moodle's restore parser.
             cdata_m = re.match(r'^\s*<!\[CDATA\[(.*)\]\]>\s*$', inner, re.DOTALL)
             if cdata_m:
                 return self._strat_cdata(
                     open_tag, cdata_m.group(1), close_tag, change_count, tag, inner)
 
-            # ── STRATEGY B: raw {mlang} blocks ────────────────────────────────
             if '{mlang' in inner:
                 return self._strat_mlang(
                     open_tag, inner, close_tag, change_count, tag)
 
-            # ── STRATEGY C: plain text (no angle brackets inside) ─────────────
             stripped = inner.strip()
             if stripped and '<' not in stripped:
                 return self._strat_plain(
                     open_tag, stripped, close_tag, change_count, tag, inner)
 
-            return m.group(0)   # raw HTML without wrapper → leave untouched
+            return m.group(0)
 
         new_content = re.sub(outer_re, handle, file_content, flags=re.DOTALL)
         return new_content, change_count[0]
 
-    # ── Strategy A ── CDATA (preserve wrapper) ────────────────────────────────
     def _strat_cdata(self, open_tag, cdata_inner, close_tag, cc, tag, original_inner):
         stripped = cdata_inner.strip()
         if not stripped:
             return f'{open_tag}<![CDATA[{cdata_inner}]]>{close_tag}'
 
-        # CDATA may itself contain {mlang} → re-translate from source block
         if '{mlang' in stripped:
             src_re = rf'\{{mlang {re.escape(self.source_lang)}\}}(.*?)\{{mlang\}}'
             src_m  = re.search(src_re, stripped, re.DOTALL)
@@ -511,10 +487,9 @@ class MoodleMBZProcessor:
                     if new_inner != stripped:
                         cc[0] += 1
                     return f'{open_tag}<![CDATA[{new_inner}]]>{close_tag}'
-            # Can't find source block → leave untouched (keep CDATA wrapper)
+
             return f'{open_tag}<![CDATA[{stripped}]]>{close_tag}'
 
-        # Fresh CDATA with no mlang yet
         if getattr(self, '_extract_mode_set', None) is None:
             print(f'      [CDATA] {len(stripped)} chars')
         translations = {
@@ -525,11 +500,10 @@ class MoodleMBZProcessor:
         new_inner = self.wrap_mlang(translations)
         if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{original_inner}{close_tag}'
-            
+
         cc[0] += 1
         return f'{open_tag}<![CDATA[{new_inner}]]>{close_tag}'
 
-    # ── Strategy B ── raw {mlang} blocks ─────────────────────────────────────
     def _strat_mlang(self, open_tag, inner, close_tag, cc, tag):
         src_re = rf'\{{mlang {re.escape(self.source_lang)}\}}(.*?)\{{mlang\}}'
         src_m  = re.search(src_re, inner, re.DOTALL)
@@ -549,17 +523,16 @@ class MoodleMBZProcessor:
                 unescaped = _html.unescape(src_content)
                 translated = self.translate_text(unescaped, lang)
                 translations[lang] = _html.escape(translated)
-                
+
         new_inner = self.wrap_mlang(translations)
         if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{inner}{close_tag}'
-            
+
         if new_inner == inner.strip():
             return f'{open_tag}{inner}{close_tag}'
         cc[0] += 1
         return f'{open_tag}{new_inner}{close_tag}'
 
-    # ── Strategy C ── plain text ──────────────────────────────────────────────
     def _strat_plain(self, open_tag, text, close_tag, cc, tag, original_inner):
         if getattr(self, '_extract_mode_set', None) is None:
             print(f'      [plain] {text[:60]!r}')
@@ -575,11 +548,9 @@ class MoodleMBZProcessor:
         new_inner = self.wrap_mlang(translations)
         if tag == 'name' and len(new_inner) > 180:
             return f'{open_tag}{original_inner}{close_tag}'
-            
+
         cc[0] += 1
         return f'{open_tag}{new_inner}{close_tag}'
-
-    # ──────────────────────────────────────────────────────── archive processing
 
     @staticmethod
     def _should_process(member_name: str) -> bool:
@@ -634,7 +605,7 @@ class MoodleMBZProcessor:
 
         def _pull_texts(xml_content: str):
             for m in tag_re.finditer(xml_content):
-                # CDATA
+
                 cdata = m.group(2)
                 plain = m.group(3)
                 raw = cdata if cdata is not None else plain
@@ -643,7 +614,7 @@ class MoodleMBZProcessor:
                 raw = raw.strip()
                 if not raw or not self._is_translatable(raw):
                     continue
-                # Wyciągnij tekst ze znaczników {mlang}
+
                 mlang_src = re.search(
                     rf'\{{mlang {re.escape(self.source_lang)}\}}(.*?)\{{mlang\}}',
                     raw, re.DOTALL
@@ -651,7 +622,7 @@ class MoodleMBZProcessor:
                 if mlang_src:
                     t = mlang_src.group(1).strip()
                 else:
-                    # Usuń wszystkie tagi HTML, zostaw sam tekst
+
                     t = re.sub(r'<[^>]+>', ' ', raw).strip()
                 if t and len(t) > 5:
                     texts.add(t)
@@ -692,7 +663,6 @@ class MoodleMBZProcessor:
         except Exception:
             return content_bytes
 
-        # Cache is pre-populated globally, so we go straight to the replacement phase
         total_changes = 0
         for tag in CONTENT_TAGS:
             content, n = self._replace_in_tag(content, tag)
@@ -722,24 +692,21 @@ class MoodleMBZProcessor:
         if self.progress_callback:
             self.progress_callback(5, "Rozpoczynam skanowanie plików kursu...")
 
-        # 1. Global Extraction Phase
         print("[*] Phase 1: Scanning and extracting all translatable texts...")
         global_extract_set = self._scan_and_extract_all(input_mbz)
-        
+
         if self.progress_callback:
             self.progress_callback(10, f"Znaleziono {len(global_extract_set)} elementów. Rozpoczynam tłumaczenie...")
 
-        # 2. Bulk Translation Phase
         if not hasattr(self, '_translation_cache'):
             self._translation_cache = {}
         if global_extract_set:
             print(f"[*] Found {len(global_extract_set)} unique text-language combinations to translate.")
             self._batch_translate(global_extract_set)
-        
+
         if self.progress_callback:
             self.progress_callback(90, "Zapisywanie przetłumaczonego kursu (pakowanie)...")
-        
-        # Save exported texts JSON if task_id is provided
+
         if task_id:
             export_data = []
             unique_originals = sorted(list(set(text for text, lang in global_extract_set)))
@@ -754,7 +721,7 @@ class MoodleMBZProcessor:
                     "original": text,
                     "translations": translations
                 })
-            
+
             temp_dir = Path("temp")
             temp_dir.mkdir(exist_ok=True)
             export_path = temp_dir / f"texts_{task_id}.json"
@@ -765,15 +732,14 @@ class MoodleMBZProcessor:
             except Exception as e:
                 print(f"[!] Failed to save texts JSON: {e}")
 
-        # 3. Streaming / Replacement Phase
         if input_mbz.lower().endswith('.zip'):
             self._process_zip(input_mbz, output_mbz)
         else:
             self._process_tar(input_mbz, output_mbz)
-            
+
         if self.progress_callback:
             self.progress_callback(100, "Zakończono przetwarzanie.")
-            
+
         return global_extract_set
 
     def _process_tar(self, input_mbz: str, output_mbz: str):
@@ -786,7 +752,7 @@ class MoodleMBZProcessor:
                     if self.cancel_callback:
                         self.cancel_callback()
                     if not member.isfile():
-                        # Directories, symlinks, etc. — copy header verbatim
+
                         tar_out.addfile(member)
                         continue
 
@@ -804,13 +770,10 @@ class MoodleMBZProcessor:
                         new_bytes = original_bytes
 
                     if new_bytes is not original_bytes:
-                        # Content changed: update TarInfo size, keep everything else
+
                         new_info = copy.copy(member)
                         new_info.size = len(new_bytes)
-                        
-                        # Fix PHP Moodle tar extractor issues by ensuring GNU/USTAR compatibility.
-                        # tarfile in Python 3.8+ may auto-generate PAX extended headers during write
-                        # if the file is slightly modified, which crashes Moodle's Archive_Tar parser.
+
                         tar_out.addfile(new_info, io.BytesIO(new_bytes))
                         processed += 1
                     else:
@@ -837,9 +800,6 @@ class MoodleMBZProcessor:
                 zip_out.writestr(info, data)
 
         print(f'[+] Done! Modified {processed} file(s).')
-
-# Removed flashcard extraction logic.
-
 
 if __name__ == '__main__':
     import sys

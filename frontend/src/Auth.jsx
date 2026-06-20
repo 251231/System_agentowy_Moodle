@@ -73,7 +73,7 @@ export default function Auth({ onLoginSuccess, onBack }) {
           email,
           password
         });
-        setIsLogin(true); // Switch to login after successful register
+        setIsLogin(true);
         setError("Konto utworzone! Możesz się teraz zalogować.");
       }
     } catch (err) {

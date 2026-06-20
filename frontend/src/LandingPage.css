@@ -8,7 +8,6 @@
     --border-hover: rgba(139, 0, 2, 0.5);
 }
 
-/* Animated background orbs */
         .bg-orbs {
             position: fixed;
             inset: 0;
@@ -64,7 +63,6 @@
             z-index: 1;
         }
 
-        /* Navigation */
         nav {
             position: fixed;
             top: 0;
@@ -147,7 +145,6 @@
             }
         }
 
-        /* Hero Section */
         .hero {
             padding-top: 8rem;
             padding-bottom: 5rem;
@@ -273,9 +270,6 @@
             color: var(--text-muted);
         }
 
-
-
-        /* Agents Section */
         .agents {
             padding: 6rem 1.5rem;
             border-bottom: 1px solid var(--border);
@@ -414,7 +408,6 @@
             background-color: rgba(139, 0, 2, 0.15);
         }
 
-        /* How It Works Section */
         .how-it-works {
             padding: 6rem 1.5rem;
             border-bottom: 1px solid var(--border);
@@ -476,7 +469,6 @@
             line-height: 1.6;
         }
 
-        /* Features Grid */
         .features-grid {
             padding: 6rem 1.5rem;
             border-top: 1px solid var(--border);
@@ -535,7 +527,6 @@
             color: var(--text-muted);
         }
 
-        /* CTA Section */
         .cta {
             padding: 6rem 1.5rem;
             border-top: 1px solid var(--border);
@@ -587,7 +578,6 @@
             flex-wrap: wrap;
         }
 
-        /* Footer */
         footer {
             padding: 3rem 1.5rem;
         }
@@ -667,7 +657,6 @@
             color: var(--text-primary);
         }
 
-        /* Responsive adjustments */
         @media (max-width: 768px) {
             .hero-content h1 {
                 font-size: 2.5rem;

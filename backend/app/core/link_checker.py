@@ -14,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.db.database import SessionLocal
 from app.db.models import SubTask
 
-# Skip files that don't contain course content/activities
 SKIP_FILES = {
     'moodle_backup.xml', 'completion.xml', 'gradebook.xml', 'groups.xml',
     'outcomes.xml', 'roles.xml', 'filters.xml', 'comments.xml', 'badges.xml',
@@ -28,33 +27,27 @@ URL_PATTERN = re.compile(r'https?://[a-zA-Z0-9.\-_~:/?#[\]@!$&\'()*+,;=]+')
 def clean_moodle_multilang(text: str) -> str:
     if not text:
         return ""
-    
-    # 1. Handle {mlang pl}Polski{mlang}{mlang en}English{mlang} syntax
+
     mlang_pl_matches = re.findall(r'{mlang\s+pl}(.*?){mlang}', text, re.DOTALL)
     if mlang_pl_matches:
         return " ".join(mlang_pl_matches).strip()
-    
-    # If {mlang} exists but no {mlang pl}, let's remove other mlang tags to keep default/remaining content
+
     if "{mlang" in text:
         text = re.sub(r'{mlang\s+[^}]+}.*?{mlang}', '', text, flags=re.DOTALL)
         text = re.sub(r'{mlang.*?}', '', text)
-    
-    # 2. Handle <span lang="pl" class="multilang">Polski</span> syntax
+
     span_pl_matches = re.findall(r'<span\s+[^>]*lang=["\']pl["\'][^>]*>(.*?)</span>', text, re.DOTALL)
     if span_pl_matches:
         cleaned = [re.sub(r'<[^>]+>', '', m) for m in span_pl_matches]
         return " ".join(cleaned).strip()
-        
-    # If no pl span but we have class="multilang", remove non-pl spans
+
     if 'class="multilang"' in text or "class='multilang'" in text:
         text = re.sub(r'<span\s+[^>]*lang=["\'](?!pl)[a-zA-Z\-]+["\'][^>]*>.*?</span>', '', text, flags=re.DOTALL)
-        
-    # Clean any remaining HTML tags
+
     text = re.sub(r'<[^>]+>', ' ', text)
-    # Clean any remaining mlang markers
+
     text = re.sub(r'{mlang.*?}', '', text)
-    
-    # Collapse double spaces
+
     text = re.sub(r'\s+', ' ', text)
     return text.strip() or "Nieznana aktywność"
 
@@ -74,28 +67,28 @@ def get_clean_search_phrase(url: str) -> str:
     domain = get_clean_domain(url)
     if not domain:
         return ""
-    
+
     parts = domain.split('.')
     if not parts:
         return ""
-        
+
     if len(parts) == 1:
         return parts[0]
-        
+
     discard_suffixes = {
-        'com', 'org', 'net', 'edu', 'gov', 'mil', 'int', 'biz', 'info', 'name', 
+        'com', 'org', 'net', 'edu', 'gov', 'mil', 'int', 'biz', 'info', 'name',
         'pl', 'en', 'de', 'fr', 'uk', 'us', 'ru', 'ch', 'it', 'nl', 'se', 'no',
         'co', 'ltd', 'me', 'io', 'tv', 'cc', 'eu', 'fm', 'am', 'ad', 'ae', 'af'
     }
-    
+
     cleaned_parts = []
     for p in parts:
         if p.lower() not in discard_suffixes:
             cleaned_parts.append(p)
-            
+
     if not cleaned_parts:
         cleaned_parts = [parts[0]]
-        
+
     phrase = " ".join(cleaned_parts)
     phrase = re.sub(r'[-_]', ' ', phrase)
     phrase = re.sub(r'\s+', ' ', phrase).strip()
@@ -117,8 +110,7 @@ class MoodleLinkChecker:
         self.task_id = task_id
         self.progress_callback = progress_callback
         self.agent_name = "Link Checker"
-        
-        # Configure SSL to ignore hostname verification and self-signed certificates
+
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -129,8 +121,7 @@ class MoodleLinkChecker:
         gets AI recommendations for broken links, and saves a JSON report.
         """
         self._log("Rozpoczynam skanowanie archiwum w poszukiwaniu linków...")
-        
-        # 1. Extract links and their contexts
+
         links_data = self._extract_links_from_mbz(input_mbz)
         if not links_data:
             self._log("Nie znaleziono żadnych zewnętrznych linków w kursie.")
@@ -148,15 +139,13 @@ class MoodleLinkChecker:
         total_links = len(links_data)
         self._log(f"Znaleziono {total_links} unikalnych linków do sprawdzenia. Weryfikacja aktywności...")
 
-        # 2. Check links in parallel
         verified_links = self._verify_links_parallel(links_data)
-        
-        # 3. Process broken links and get suggestions
+
         broken_links = [l for l in verified_links if not l["is_active"]]
         active_count = total_links - len(broken_links)
-        
+
         self._log(f"Weryfikacja zakończona: {active_count} aktywnych, {len(broken_links)} nieaktywnych.")
-        
+
         if broken_links:
             self._log(f"Generowanie sugestii dla {len(broken_links)} niedziałających linków...")
             for idx, item in enumerate(broken_links):
@@ -168,7 +157,6 @@ class MoodleLinkChecker:
                 item["suggested_url"] = suggestion.get("suggested_url", "")
                 item["reason"] = suggestion.get("reason", "Brak szczegółowego uzasadnienia.")
 
-        # 4. Save report
         report = {
             "summary": {
                 "total": total_links,
@@ -186,11 +174,10 @@ class MoodleLinkChecker:
         Extracts links with contexts from ZIP/TAR MBZ.
         Returns a list of dicts: [{"url": str, "context": str, "file": str}]
         """
-        links_map = {} # url -> {context, file}
-        activity_map = {} # directory -> (activity title, section title)
-        section_dir_map = {} # directory -> section title
-        
-        # 1. Parse moodle_backup.xml first to extract course sections and activity hierarchies
+        links_map = {}
+        activity_map = {}
+        section_dir_map = {}
+
         backup_xml = ""
         try:
             if input_mbz.lower().endswith('.zip'):
@@ -209,9 +196,9 @@ class MoodleLinkChecker:
                             break
         except Exception as e:
             print(f"[Link Checker] Failed to pre-parse moodle_backup.xml: {e}")
-            
+
         if backup_xml:
-            # Parse sections mapping: sectionid -> title
+
             section_map = {}
             sections_matches = re.findall(r'<section>(.*?)</section>', backup_xml, re.DOTALL)
             for s in sections_matches:
@@ -226,7 +213,6 @@ class MoodleLinkChecker:
                     section_map[sid] = title
                     section_dir_map[f"sections/section_{sid}"] = title
 
-            # Parse activities mapping: directory -> (activity title, section title)
             activities_matches = re.findall(r'<activity>(.*?)</activity>', backup_xml, re.DOTALL)
             for a in activities_matches:
                 dir_m = re.search(r'<directory>(.*?)</directory>', a)
@@ -238,23 +224,22 @@ class MoodleLinkChecker:
                     if title.startswith("<![CDATA[") and title.endswith("]]>"):
                         title = title[9:-3]
                     title = clean_moodle_multilang(title)
-                    
+
                     sec_title = "Ogólny"
                     if sid_m:
                         sid = sid_m.group(1)
                         sec_title = section_map.get(sid, "Ogólny")
-                        
+
                     activity_map[directory] = (title, sec_title)
 
         def process_xml_content(content: str, filename: str):
-            # Unescape HTML entities first to prevent escaped characters/tags from being part of captured URLs
+
             content_clean = html.unescape(content)
-            
-            # Try to resolve location context using course backup structure
+
             context = None
             filename_clean = filename.replace('\\', '/').strip('./')
             parts = filename_clean.split('/')
-            
+
             if len(parts) >= 2:
                 if parts[0] == 'activities':
                     act_dir = f"activities/{parts[1]}"
@@ -266,7 +251,7 @@ class MoodleLinkChecker:
                     if sec_dir in section_dir_map:
                         sec_title = section_dir_map[sec_dir]
                         context = f"Sekcja: {sec_title}"
-            
+
             # Fallback to local name tag if not resolved
             if not context:
                 name_m = re.search(r'<name>(<!\[CDATA\[(.*?)\]\]>|(.*?))</name>', content_clean, re.DOTALL)
@@ -275,10 +260,10 @@ class MoodleLinkChecker:
                     plain = name_m.group(3)
                     raw_context = (cdata if cdata is not None else plain or "").strip()
                     context = clean_moodle_multilang(raw_context)
-                    
+
             if not context or context == "Nieznana aktywność":
                 context = "Ogólny kurs"
-            
+
             # 1. Search for HTML anchor tags to find URLs with their specific anchor texts
             anchor_pattern = re.compile(
                 r'<a\s+[^>]*href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>',
@@ -291,16 +276,14 @@ class MoodleLinkChecker:
                     continue
                 if len(url) < 12:
                     continue
-                
-                # Clean up anchor text
+
                 clean_anchor = re.sub(r'<[^>]+>', ' ', anchor_text)
                 clean_anchor = html.unescape(clean_anchor)
                 clean_anchor = re.sub(r'\s+', ' ', clean_anchor).strip()
-                
-                # Use anchor text if it is descriptive (not empty, not just a URL)
+
                 if not clean_anchor or clean_anchor.startswith("http://") or clean_anchor.startswith("https://") or len(clean_anchor) < 2:
                     clean_anchor = None
-                
+
                 if url not in links_map:
                     links_map[url] = {
                         "url": url,
@@ -309,8 +292,7 @@ class MoodleLinkChecker:
                         "file": Path(filename).name,
                         "archive_path": filename
                     }
-            
-            # 2. Find any other raw URLs that were not in anchor tags
+
             urls = URL_PATTERN.findall(content_clean)
             for url in urls:
                 url = url.rstrip('.,;:)!?>}"\'')
@@ -318,7 +300,7 @@ class MoodleLinkChecker:
                     continue
                 if len(url) < 12:
                     continue
-                    
+
                 if url not in links_map:
                     links_map[url] = {
                         "url": url,
@@ -350,7 +332,7 @@ class MoodleLinkChecker:
                                 pass
         except Exception as e:
             print(f"[Link Checker] Error scanning MBZ: {e}")
-            
+
         return list(links_map.values())
 
     def _should_process(self, member_name: str) -> bool:
@@ -365,12 +347,11 @@ class MoodleLinkChecker:
         is_active = False
         status_code = None
         error_msg = ""
-        
+
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
         }
-        
-        # Try HEAD request first
+
         try:
             req = urllib.request.Request(url, headers=headers, method='HEAD')
             with urllib.request.urlopen(req, timeout=7, context=self.ssl_context) as response:
@@ -384,8 +365,7 @@ class MoodleLinkChecker:
             error_msg = str(e.reason)
         except Exception as e:
             error_msg = str(e)
-            
-        # If HEAD failed, fallback to GET (some servers block HEAD)
+
         if not is_active:
             try:
                 req = urllib.request.Request(url, headers=headers, method='GET')
@@ -416,10 +396,10 @@ class MoodleLinkChecker:
     def _verify_links_parallel(self, links_data: list[dict]) -> list[dict]:
         results = []
         max_workers = min(15, len(links_data))
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_item = {executor.submit(self._verify_single_link, item): item for item in links_data}
-            
+
             completed = 0
             for future in as_completed(future_to_item):
                 completed += 1
@@ -437,12 +417,11 @@ class MoodleLinkChecker:
                         "status_code": None,
                         "error": str(e)
                     })
-                
-                # Report progress
+
                 if self.progress_callback:
                     p = 20 + int(60 * completed / len(links_data))
                     self.progress_callback(p, f"Sprawdzanie linków ({completed}/{len(links_data)})...")
-                    
+
         return results
 
     def _get_smart_suggestion(self, dead_url: str, context: str) -> dict:
@@ -450,7 +429,7 @@ class MoodleLinkChecker:
         Coordinates suggestions by prioritizing OpenRouter LLM (if API key is present),
         and falls back to a clean Google search URL.
         """
-        # 1. Try to generate suggestion via OpenRouter LLM if API key is present
+
         if self.api_key:
             try:
                 ai_suggestion = self._get_ai_suggestion(dead_url, context)
@@ -459,7 +438,6 @@ class MoodleLinkChecker:
             except Exception as e:
                 print(f"[Link Checker] Error getting AI suggestion: {e}")
 
-        # 2. Fallback to Google Search if LLM failed, wasn't available, or couldn't find a match
         domain_q = get_clean_search_phrase(dead_url) or context
         reason = "Kliknij, aby wyszukać tę witrynę w Google."
         if not self.api_key:
@@ -476,7 +454,7 @@ class MoodleLinkChecker:
         """
         if not query or len(query.strip()) < 2:
             return []
-            
+
         url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({'q': query})
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
@@ -507,11 +485,10 @@ class MoodleLinkChecker:
         clean_domain = get_clean_search_phrase(dead_url) or context
         google_fallback = f"https://www.google.com/search?q={urllib.parse.quote(clean_domain)}"
 
-        # Dynamically query DDG search to find real, active, related links on the fly!
         search_query = get_clean_search_phrase(dead_url)
         if not search_query or len(search_query.strip()) < 3:
             search_query = context
-            
+
         search_results = self._search_web_for_alternatives(search_query)
         search_info = ""
         if search_results:
@@ -553,7 +530,7 @@ class MoodleLinkChecker:
         try:
             from openai import OpenAI
             client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
-            
+
             for model in free_models:
                 try:
                     resp = client.chat.completions.create(
@@ -568,16 +545,16 @@ class MoodleLinkChecker:
                     )
                     if resp.choices and resp.choices[0].message.content:
                         res_text = resp.choices[0].message.content.strip()
-                        # clean markdown formatting if present
+
                         res_text = re.sub(r"^```(?:json)?", "", res_text, flags=re.MULTILINE).strip()
                         res_text = re.sub(r"```$", "", res_text, flags=re.MULTILINE).strip()
-                        
+
                         data = json.loads(res_text)
                         if "suggested_url" in data:
                             return data
                 except Exception as e:
                     print(f"[Link Checker] LLM Error ({model}): {e}")
-                    
+
         except Exception as e:
             print(f"[Link Checker] OpenRouter initialization failed: {e}")
 

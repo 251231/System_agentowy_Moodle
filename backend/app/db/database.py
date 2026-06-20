@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# PostgreSQL w Docker lub SQLite lokalnie
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./moodle_agents.db")
 
 engine = create_engine(
