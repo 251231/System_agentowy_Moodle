@@ -18,13 +18,12 @@ class User(Base):
 
     tasks = relationship("Task", back_populates="owner", cascade="all, delete-orphan")
 
-
 class Task(Base):
     __tablename__ = "tasks"
 
     id              = Column(String, primary_key=True, default=_uuid)
     original_filename = Column(String)
-    status          = Column(String, default="pending")   # pending | processing | completed | failed
+    status          = Column(String, default="pending")
     progress        = Column(Integer, default=0)
     result_filename = Column(String, nullable=True)
     h5p_filename    = Column(String, nullable=True)
@@ -34,7 +33,6 @@ class Task(Base):
 
     owner = relationship("User", back_populates="tasks")
     subtasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan")
-
 
 class SubTask(Base):
     __tablename__ = "subtasks"

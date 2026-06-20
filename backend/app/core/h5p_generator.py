@@ -12,9 +12,6 @@ import re
 import uuid
 from pathlib import Path
 
-
-# ── LLM generation ────────────────────────────────────────────────────────────
-
 def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     """
     Wywołuje LLM i zwraca listę obiektów – surowych danych dla create_h5p_archive().
@@ -28,7 +25,6 @@ def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     focus  = config.get("h5p_focus", [])
     instructions = config.get("h5p_instructions", "")
 
-    # --- buduj instrukcje schematu JSON w zależności od wybranych typów ---
     type_instructions = []
     if "Quiz (ABCD)" in types:
         type_instructions.append(
@@ -50,7 +46,7 @@ def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
         )
 
     if not type_instructions:
-        # fallback
+
         type_instructions.append(
             "- {\"type\": \"multichoice\", \"question\": \"<string>\", \"options\": [\"<A>\",\"<B>\",\"<C>\",\"<D>\"], "
             "\"correctIndex\": <0-based int>, \"feedback\": \"<string>\"}"
@@ -60,7 +56,6 @@ def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     focus_str     = ", ".join(focus) if focus else "brak"
     combined_text = "\n\n".join(texts)
 
-    # Ogranicz rozmiar kontekstu (ok. 20 tys. znaków = ~5 tys. tokenów)
     if len(combined_text) > 20000:
         combined_text = combined_text[:20000]
 
@@ -156,11 +151,10 @@ def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
             print(f"[H5P] OpenRouter init error: {e}")
 
     else:
-        # Mock / brak API
+
         print("[H5P] No API key – returning mock data")
         return _mock_data(types)
 
-    # --- oczyszczanie odpowiedzi z ewentualnych markdownów ---
     result_text = re.sub(r"^```(?:json)?", "", result_text, flags=re.MULTILINE).strip()
     result_text = re.sub(r"```$", "", result_text, flags=re.MULTILINE).strip()
 
@@ -174,7 +168,6 @@ def generate_h5p_quiz_json(texts, api_type, api_key, config=None):
     except json.JSONDecodeError as e:
         print(f"[H5P] JSON parse error: {e}\nRaw response:\n{result_text[:500]}")
         return []
-
 
 def _mock_data(types):
     items = []
@@ -196,9 +189,6 @@ def _mock_data(types):
                       "tip": "Wskazówka: astronomia.", "feedback": "Tak, Ziemia obraca się wokół Słońca."})
     return items
 
-
-# ── Archive builder ────────────────────────────────────────────────────────────
-
 def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
     """
     Buduje plik .h5p z listy itemów zwróconych przez LLM.
@@ -209,8 +199,8 @@ def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
     - Mieszane → mainLibrary = H5P.Column
     """
     dialogs   = []
-    qs_items  = []   # MultiChoice, TrueFalse
-    drag_items = []  # DragText (osobne, bo nie idzie do QuestionSet poprawnie)
+    qs_items  = []
+    drag_items = []
 
     for item in items:
         t = item.get("type", "multichoice")
@@ -223,9 +213,9 @@ def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
 
         elif t == "dragtext":
             raw_text = item.get("text", "")
-            # Usuń HTML jeśli LLM owinął tekst w tagi
+
             raw_text = re.sub(r"<[^>]+>", " ", raw_text).strip()
-            # Pomijaj elementy bez słów w gwiazdkach (błędnie wygenerowane)
+
             if not raw_text or not re.search(r"\*[^*]+\*", raw_text):
                 print(f"[H5P] Skipping invalid dragtext (no asterisked words): {raw_text[:60]!r}")
                 continue
@@ -264,8 +254,8 @@ def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
                 },
             })
 
-        else:  # multichoice
-            # Pomin jeśli brak pytania lub za mało opcji
+        else:
+
             if not item.get("question", "").strip():
                 print("[H5P] Skipping multichoice with empty question")
                 continue
@@ -329,9 +319,6 @@ def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
                 },
             })
 
-    # -----------------------------------------------------------------
-    # Wybierz strategię pakowania
-    # -----------------------------------------------------------------
     only_dialogs   = bool(dialogs) and not qs_items and not drag_items
     only_qs        = bool(qs_items) and not dialogs and not drag_items
     only_drag      = bool(drag_items) and not dialogs and not qs_items
@@ -340,20 +327,17 @@ def create_h5p_archive(items, output_path: str, title: str = "Treści H5P"):
     if only_dialogs:
         _build_dialogcards(dialogs, output_path, title)
     elif only_qs:
-        # Używamy Column zamiast QuestionSet - brak problemów z pustymi przyciskami nav
+
         _build_quiz_as_column(qs_items, output_path, title)
     elif only_drag:
-        # DragText nie ma kontenera; pakujemy jako Column z pojedynczym elementem
+
         _build_column([("drag", d) for d in drag_items], output_path, title)
     else:
         _build_column_mixed(dialogs, qs_items, drag_items, output_path, title)
 
-
-# ── builders ──────────────────────────────────────────────────────────────────
-
 def _build_quiz_as_column(qs_items, output_path, title):
     """Pakuje pytania quizu bezpośrednio w H5P.Column.
-    
+
     Każde pytanie (MultiChoice / TrueFalse) jest osobnym elementem kolumny.
     Brak przycisków nawigacji QuestionSet (które mają problemy z CSS w Moodle).
     Każde pytanie ma własny przycisk 'Sprawdź'.
@@ -388,8 +372,6 @@ def _build_quiz_as_column(qs_items, output_path, title):
     }
     _write_archive(output_path, h5p_json, content_json)
 
-
-
 def _qs_texts():
     return {
         "prevButton": "◀ Poprzednie",
@@ -405,7 +387,6 @@ def _qs_texts():
         "emptyText": "Puste",
     }
 
-
 def _qs_end():
     return {
         "showResultPage": True,
@@ -419,7 +400,6 @@ def _qs_end():
         "retryButtonText": "Spróbuj ponownie",
         "requiresInput": "Odpowiedz na pytania zanim sprawdzisz wynik.",
     }
-
 
 def _build_dialogcards(dialogs, output_path, title):
     content_json = {
@@ -470,7 +450,6 @@ def _build_dialogcards(dialogs, output_path, title):
     }
     _write_archive(output_path, h5p_json, content_json)
 
-
 def _build_questionset(qs_items, output_path, title):
     content_json = {
         "introPage": {
@@ -504,7 +483,6 @@ def _build_questionset(qs_items, output_path, title):
     }
     _write_archive(output_path, h5p_json, content_json)
 
-
 def _build_column_mixed(dialogs, qs_items, drag_items, output_path, title):
     """Pakuje mieszane typy w H5P.Column."""
     column_items = []
@@ -531,7 +509,7 @@ def _build_column_mixed(dialogs, qs_items, drag_items, output_path, title):
         })
 
     if qs_items:
-        # Pytania quizu bezpośrednio w Column - bez QuestionSet i bez pustych przycisków nav
+
         for q in qs_items:
             column_items.append({
                 "content": {
@@ -575,7 +553,6 @@ def _build_column_mixed(dialogs, qs_items, drag_items, output_path, title):
     }
     _write_archive(output_path, h5p_json, content_json)
 
-
 def _build_column(drag_list, output_path, title):
     """Tylko DragText – pakujemy w Column."""
     column_items = []
@@ -605,7 +582,6 @@ def _build_column(drag_list, output_path, title):
         ],
     }
     _write_archive(output_path, h5p_json, content_json)
-
 
 def _write_archive(output_path, h5p_json, content_json):
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
